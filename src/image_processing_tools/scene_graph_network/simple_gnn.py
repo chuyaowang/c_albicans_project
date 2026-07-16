@@ -131,6 +131,36 @@ class Classifier(torch.nn.Module):
             return out, emb
         return out
 
+class NodeClassifier(torch.nn.Module):
+    """Predicts a node type from the final node embedding.
+
+    Returns raw logits: CrossEntropyLoss applies log-softmax itself, so a softmax here
+    would apply it twice and flatten the gradients.
+    """
+    def __init__(self, hidden_channels, num_classes=3, dropout_p=0.5):
+        super().__init__()
+        self.mlp_body = Sequential(
+            CustomLazyLinear(hidden_channels, bias=False),
+            LayerNorm(hidden_channels),
+            ReLU(),
+            Dropout(p=dropout_p),
+        )
+        self.mlp_head = Linear(hidden_channels, num_classes, bias=True)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for layer in list(self.mlp_body) + [self.mlp_head]:
+            if isinstance(layer, CustomLazyLinear):
+                pass  # Handled automatically during the first forward pass
+            elif isinstance(layer, Linear):
+                init.xavier_uniform_(layer.weight)
+                if layer.bias is not None:
+                    init.zeros_(layer.bias)
+
+    def forward(self, x):
+        # x: (num_nodes, D) final node embeddings
+        return self.mlp_head(self.mlp_body(x))
+
 class EdgeUpdater(torch.nn.Module):
     def __init__(self, hidden_channels, dropout_p=0.5):
         super().__init__()
@@ -282,6 +312,8 @@ class Model(torch.nn.Module):
         node_bbox_pad_frac=0.1,
         node_feature_dim=8,
         edge_feature_dim=10,
+        predict_node_type=False,
+        num_node_classes=3,
     ):
         super().__init__()
         self.use_visual_features = use_visual_features
@@ -303,6 +335,12 @@ class Model(torch.nn.Module):
         self.conv2 = GCNConv(hidden_channels, dropout_p)
         self.edge_updater_1 = EdgeUpdater(hidden_channels, dropout_p)
         self.classifier = Classifier(hidden_channels, dropout_p)
+
+        # Reads the same x_out the edge classifier reads, so the node task shapes the shared
+        # node representation rather than a private one.
+        self.predict_node_type = predict_node_type
+        if predict_node_type:
+            self.node_classifier = NodeClassifier(hidden_channels, num_node_classes, dropout_p)
 
         # GraphNorm for residual skip connections: normalizes per graph, no running stats.
         self.norm_x1 = GraphNorm(hidden_channels + node_feature_dim)
@@ -355,7 +393,8 @@ class Model(torch.nn.Module):
 
         return self.node_visual_cnn(node_patches), self.edge_visual_cnn(edge_patches)
 
-    def forward(self, data, return_attention=False, return_embeddings=False, attribution_mode=False):
+    def forward(self, data, return_attention=False, return_embeddings=False,
+                attribution_mode=False, return_node_logits=False):
         x = data.x
         edge_index = data.edge_index
         edge_attr = data.edge_attr
@@ -405,6 +444,15 @@ class Model(torch.nn.Module):
         edge_out = torch.cat([edge_out, edge_attr_orig], dim=-1)
         edge_out = self.norm_e2(edge_out, edge_batch)
 
+        node_logits = None
+        if return_node_logits:
+            if not self.predict_node_type:
+                raise RuntimeError(
+                    "return_node_logits=True requires Model(predict_node_type=True); "
+                    "this model has no node head."
+                )
+            node_logits = self.node_classifier(x_out)
+
         if return_embeddings:
             out, emb = self.classifier(x_out, edge_out, edge_index, return_embeddings=True)
         else:
@@ -419,13 +467,22 @@ class Model(torch.nn.Module):
                 return out, emb, attr_tensors
             return out, attr_tensors
 
+        # node_logits is appended LAST so every existing unpack keeps its positions.
         if return_embeddings and return_attention:
+            if return_node_logits:
+                return out, emb, (alpha1, alpha2), node_logits
             return out, emb, (alpha1, alpha2)
 
         if return_embeddings:
+            if return_node_logits:
+                return out, emb, node_logits
             return out, emb
 
         if return_attention:
+            if return_node_logits:
+                return out, (alpha1, alpha2), node_logits
             return out, (alpha1, alpha2)
 
+        if return_node_logits:
+            return out, node_logits
         return out
