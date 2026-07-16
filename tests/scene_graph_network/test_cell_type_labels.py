@@ -56,20 +56,29 @@ def test_background_fragment_gets_class_zero():
                             NODE_CLASSES["background"]]
 
 
-def test_fragment_inherits_gt_cell_type_not_its_own_shape():
-    """The whole point: a ROUND fragment of a filament is still hyphal.
+def test_all_fragments_of_one_gt_cell_share_its_type():
+    """The wiring invariant: a fragment's type is looked up from the GT cell it was
+    assigned to, so the fragment's own shape never enters the computation.
 
-    If the type were read off the fragment, this fragment would be called epithelial and
-    the task would collapse into a restatement of the existing node features.
+    Both fragments below belong to one fat epithelial cell, so both must be epithelial.
+    Reading the type off the fragment instead would split them -- the sliver's own
+    mean_width is 1.73 (hyphal), the chunk's is 12.16 (epithelial) -- which is exactly
+    the failure this guards: the node head would collapse into a restatement of shape
+    features the model already has as inputs, while still appearing to work.
+
+    This is the real case, not a contrived one: AIS oversegments a fat epithelial cell
+    into pieces, and some of those pieces are slivers.
     """
-    gt = np.zeros((60, 60), dtype=np.int32)
-    gt[10:12, 5:55] = 1                      # thin filament
-    ais = np.zeros((60, 60), dtype=np.int32)
-    ais[10:12, 20:22] = 1                    # a 2x2 SQUARE chunk of it
+    gt = np.zeros((90, 90), dtype=np.int32)
+    gt[30:58, 20:48] = 1                       # one fat epithelial cell, mean_width 24.26
+
+    ais = np.zeros((90, 90), dtype=np.int32)
+    ais[30:58, 22:24] = 1                      # a thin sliver of it,  own mean_width 1.73
+    ais[30:44, 30:44] = 2                      # a fat chunk of it,    own mean_width 12.16
 
     out = node_type_labels(ais, gt, {"metric": "mean_width", "threshold": 8.0},
                            min_overlap_frac=0.1)
-    assert out.tolist() == [NODE_CLASSES["hyphal"]]
+    assert out.tolist() == [NODE_CLASSES["epithelial"], NODE_CLASSES["epithelial"]]
 
 
 def test_node_order_matches_regionprops_ascending_labels():
