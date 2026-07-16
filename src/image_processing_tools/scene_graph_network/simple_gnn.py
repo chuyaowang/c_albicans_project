@@ -463,8 +463,14 @@ class Model(torch.nn.Module):
             if self.use_visual_features:
                 attr_tensors['node_visual'] = node_visual
                 attr_tensors['edge_visual'] = edge_visual
+            # node_logits stays last here too. Returning early without it would drop a
+            # tensor the caller asked for and raise nothing.
+            if return_embeddings and return_node_logits:
+                return out, emb, attr_tensors, node_logits
             if return_embeddings:
                 return out, emb, attr_tensors
+            if return_node_logits:
+                return out, attr_tensors, node_logits
             return out, attr_tensors
 
         # node_logits is appended LAST so every existing unpack keeps its positions.

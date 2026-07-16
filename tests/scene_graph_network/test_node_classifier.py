@@ -71,3 +71,27 @@ def test_requesting_node_logits_without_the_head_raises():
         assert "predict_node_type" in str(exc)
     else:
         raise AssertionError("expected an error naming predict_node_type")
+
+
+def test_attribution_mode_returns_node_logits_last():
+    """attribution_mode must not swallow the flag. A silently dropped tensor is a wrong
+    answer that raises nothing, which is worse than a crash.
+    """
+    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
+    data = _graph()
+    model.eval()
+    out, attr_tensors, node_logits = model(
+        data, attribution_mode=True, return_node_logits=True
+    )
+    assert node_logits.shape == (data.num_nodes, 3)
+    assert {"x", "edge_attr"} <= set(attr_tensors)
+
+
+def test_attribution_mode_unchanged_without_node_logits():
+    """The pre-existing attribution contract must not move."""
+    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
+    data = _graph()
+    model.eval()
+    out, attr_tensors = model(data, attribution_mode=True)
+    assert isinstance(attr_tensors, dict)
+    assert {"x", "edge_attr"} <= set(attr_tensors)
