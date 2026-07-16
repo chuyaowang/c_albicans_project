@@ -1,0 +1,30 @@
+{
+  "// Top-level settings for the model and overall pipeline behavior": "",
+  "model_type": "vit_l_lm",
+  "checkpoint_path": "~/path/to/model/checkpoint",
+  "decoder_checkpoint_path": "~/path/to/decoder/checkpoint",
+  "base_input_dir": "~/path/to/data/root",
+  "segmentation_mode": "prompted",
+
+  "// Preprocessing settings applied to each image channel": "",
+  "preprocessing": {
+    "resize_image": true,
+    "max_dim": 1024,
+    "outlier_percentile": 0.35,
+    "quantization": "8bit"
+  },
+
+  "// Settings specific to prompt-based segmentation": "",
+  "prompting": {
+    "prompt_mode": "bbox",
+    "min_mask_area": 150,
+    "use_seeded_watershed_for_bbox": false,
+    "bbox_radius_multiplier": 2.0
+  },
+
+  "// Debugging options to save intermediate files": "",
+  "debug_mode": {
+    "output_dir": "debug_outputs",
+    "save_prompts": false
+  }
+}

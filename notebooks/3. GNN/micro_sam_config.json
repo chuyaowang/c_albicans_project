@@ -1,0 +1,92 @@
+{
+  "// Top-level settings for the model and overall pipeline behavior": "",
+  "// model_type options: 'vit_b', 'vit_l', 'vit_h', 'vit_b_lm', 'vit_l_lm', 'vit_h_lm' (lm = life-microscopy fine-tuned)": "",
+  "model_type": "vit_l_lm",
+  "// checkpoint_path: path to a custom SAM encoder checkpoint, or null to use the default micro_sam weights": "",
+  "checkpoint_path": "~/path/to/model/checkpoint",
+  "// decoder_checkpoint_path: path to the AIS decoder checkpoint, required for 'automatic' and 'combined' modes; null otherwise": "",
+  "decoder_checkpoint_path": "~/path/to/decoder/checkpoint",
+  "base_input_dir": "~/path/to/data/root",
+  "// segmentation_mode options: 'prompted' (point/box prompts), 'automatic' (AIS on full volume), 'combined' (AIS seed slice + 3D mask propagation)": "",
+  "segmentation_mode": "prompted",
+
+  "// Preprocessing settings applied to each image channel": "",
+  "preprocessing": {
+    "// resize_image: whether to downscale images so the longest side is at most max_dim pixels": "",
+    "resize_image": true,
+    "max_dim": 1024,
+    "// outlier_percentile: fraction of extreme pixel values clipped before normalization (e.g. 0.35 clips bottom/top 0.35%)": "",
+    "outlier_percentile": 0.35,
+    "// quantization options: '8bit' (convert to uint8 after normalization), '16bit' (keep uint16), null (no quantization)": "",
+    "quantization": "8bit",
+    "// correct_DIC_shift: [row_shift, col_shift] pixel offset to align DIC channel to fluorescence; set to null to disable": "",
+    "correct_DIC_shift": [5, 22],
+    "// two_channel_merge_mode (applies only when the container has exactly 2 channels):": "",
+    "//   'average_replicate' — average ch1 and ch2 into a single intensity, then replicate to (Z, H, W, 3)": "",
+    "//   'passthrough'       — stack channels as (Z, H, W, 2) and let micro_sam pad a zero blue channel per slice": "",
+    "two_channel_merge_mode": "average_replicate"
+  },
+
+  "// Settings specific to prompt-based segmentation": "",
+  "prompting": {
+    "// prompt_mode options: 'points' (centroid point prompts from DAPI), 'boxes' (bounding-box prompts)": "",
+    "prompt_mode": "points",
+    "// min_mask_area: minimum pixel area for a segmented mask to be kept (smaller masks are discarded)": "",
+    "min_mask_area": 150,
+    "// use_seeded_watershed_for_bbox: if true, use seeded watershed to refine bbox prompts; false uses raw SAM output": "",
+    "use_seeded_watershed_for_bbox": false,
+    "// bbox_radius_multiplier: scales the bounding box around each prompt point (larger = wider box)": "",
+    "bbox_radius_multiplier": 2.0
+  },
+
+  "// Spatial dimensionality: 2 for single-plane images, 3 for z-stack volumes": "",
+  "ndim": 2,
+
+  "// Tiling settings — split large images into overlapping tiles to fit GPU memory": "",
+  "// tile_shape and halo are [height, width] in pixels; set both to null to disable tiling": "",
+  "// Example: tile_shape [512, 512] with halo [64, 64] is a common starting point": "",
+  "tiling": {
+    "tile_shape": null,
+    "halo": null
+  },
+
+  "// Decoder generate() thresholds for AIS mode (automatic and combined)": "",
+  "ais_generate": {
+    "// center_distance_threshold: pixels below this center-distance map value are treated as object centers (0–1)": "",
+    "center_distance_threshold": 0.5,
+    "// boundary_distance_threshold: pixels below this boundary-distance map value are treated as boundaries (0–1)": "",
+    "boundary_distance_threshold": 0.5,
+    "// foreground_threshold: decoder foreground probability cutoff; pixels below this value are background (0–1)": "",
+    "foreground_threshold": 0.5,
+    "// foreground_smoothing: Gaussian sigma applied to the foreground probability map before thresholding": "",
+    "foreground_smoothing": 1.0,
+    "// distance_smoothing: Gaussian sigma applied to center/boundary distance maps before thresholding": "",
+    "distance_smoothing": 1.6,
+    "// min_size: minimum voxel count for an AIS-generated instance to be kept (0 = keep all)": "",
+    "min_size": 0
+  },
+
+  "// Propagation settings for 3D prompted segmentation (prompted ndim=3) and combined mode": "",
+  "segmentation_3d": {
+    "// seed_slice: z-index of the slice used as the prompt/AIS seed; null = auto-select (uses container.seed_slice, dapi_slice, or volume midpoint)": "",
+    "seed_slice": null,
+    "// iou_threshold: minimum IoU between adjacent-slice masks to accept a propagated mask (0–1)": "",
+    "iou_threshold": 0.5,
+    "// projection options: 'mask' (propagate binary mask), 'points' (sample points from mask), 'points_and_mask' (both), 'bounding_box' (bbox prompt)": "",
+    "projection": "points_and_mask",
+    "// stop_lower: if true, stop propagating downward (toward z=0) when IoU drops below threshold": "",
+    "stop_lower": false,
+    "// stop_upper: if true, stop propagating upward (toward z=max) when IoU drops below threshold": "",
+    "stop_upper": false,
+    "// box_extension: fractional amount to expand the bounding box prompt at each propagation step (0.0 = no expansion)": "",
+    "box_extension": 0.0
+  },
+
+  "// Debugging options to save intermediate files": "",
+  "debug_mode": {
+    "// output_dir: subdirectory (relative to each image's parent folder) where debug files are written": "",
+    "output_dir": "debug_outputs",
+    "// save_prompts: if true, saves the prompt coordinates/masks used for each image as a .pkl file": "",
+    "save_prompts": false
+  }
+}

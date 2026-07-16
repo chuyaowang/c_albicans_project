@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image_processing_tools"
+version = "0.1.0"
+authors = [
+  { name="Wang Chuyao" },
+]
+description = "Image processing utility tools for Candida albicans microscopy analysis, including segmentation, tracking, and visualization."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "scipy",
+    "scikit-image",
+    "tifffile",
+    "matplotlib",
+    "networkx",
+    "zarr",
+    "numcodecs",
+    "tqdm"
+]
+
+[project.scripts]
+process-tiffs = "image_processing_tools.util.process_tiffs:main"
+tiff-to-omezarr = "image_processing_tools.util.tiff_to_omezarr:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

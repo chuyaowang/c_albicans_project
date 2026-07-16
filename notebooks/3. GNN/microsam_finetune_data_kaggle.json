@@ -1,0 +1,48 @@
+{
+    "samples": [
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET112_HWP1Cal610_6h_GoC_01_DIC.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET112_HWP1Cal610_6h_GoC_01_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET146_ECE1Q670_cFOSQ570_06_DIC.tif",
+                "fluorescence": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/MAX_C2_CET146_ECE1Q670_cFOSQ570_06_CY5 CFP DAPI.tif",
+                "dapi": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/MAX_C3_CET146_ECE1Q670_cFOSQ570_06_CY5 CFP DAPI.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET146_ECE1Q670_cFOSQ570_06_DIC_label.tif",
+            "correct_DIC_shift": [5, 22]
+        },
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_01_DIC.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_01_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_04_DIC.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_04_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_05_DIC.tif"
+            },
+            "label": "/kaggle/input/datasets/gudagudao/microsam-finetune/data/CET155_Cocu_Phalloidin_05_DIC_labels.tif",
+            "correct_DIC_shift": [0, 0]
+        }
+    ]
+}

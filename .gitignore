@@ -1,0 +1,34 @@
+# Rendered figures written by the notebooks (723 MB at the time this repo was created).
+# Regenerable, and git cannot delta-compress PNGs -- every re-run would add megabytes to
+# history permanently.
+notebooks/*/output/
+/output/
+
+# Notebook outputs are stripped on commit by the nbstripout filter (see .gitattributes),
+# not ignored -- they cannot be, since they live inside the tracked .ipynb. They stay in
+# your working copy; only the committed version is clean.
+
+# A downloaded third-party example, not our work. It ships with "keep_output": true in its
+# metadata, which is nbstripout's opt-out, so the filter honours it and the file stages at
+# 42.6 MB -- more than the rest of the repository combined. Not ours to strip or to track.
+notebooks/1. Qualitative Evaluation/mono_channel_bact.ipynb
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# CodeGraph index: regenerable from source, and rewritten on every edit.
+.codegraph/
+
+# Machine-local Claude Code settings. Shared settings.json, if ever added, is tracked.
+.claude/settings.local.json
+
+# Node
+node_modules/

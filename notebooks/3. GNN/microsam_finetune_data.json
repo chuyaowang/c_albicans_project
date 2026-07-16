@@ -1,0 +1,48 @@
+{
+    "samples": [
+        {
+            "image": {
+                "dic": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_01_DIC.tif"
+            },
+            "label": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_01_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC.tif"
+            },
+            "label": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/CET146_ECE1Q670_cFOSQ570_06_DIC.tif",
+                "fluorescence": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/MAX_C2_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI.tif",
+                "dapi": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/MAX_C3_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI.tif"
+            },
+            "label": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/CET146_ECE1Q670_cFOSQ570_06_DIC_label.tif",
+            "correct_DIC_shift": [5, 22]
+        },
+        {
+            "image": {
+                "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/CET155_Cocu_Phalloidin_01_DIC.tif"
+            },
+            "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/CET155_Cocu_Phalloidin_01_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/CET155_Cocu_Phalloidin_04_DIC.tif"
+            },
+            "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/CET155_Cocu_Phalloidin_04_DIC_label.tif",
+            "correct_DIC_shift": [0, 0]
+        },
+        {
+            "image": {
+                "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/CET155_Cocu_Phalloidin_05_DIC.tif"
+            },
+            "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/CET155_Cocu_Phalloidin_05_DIC_labels.tif",
+            "correct_DIC_shift": [0, 0]
+        }
+    ]
+}
