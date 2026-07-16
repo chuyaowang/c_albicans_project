@@ -8,12 +8,13 @@ import numpy as np
 
 from image_processing_tools.scene_graph_network.cell_mask_graph import extract_cell_graph
 from image_processing_tools.scene_graph_network.cell_merge_labels import cell_merge_labels
+from image_processing_tools.scene_graph_network.cell_type_labels import node_type_labels
 from image_processing_tools.scene_graph_network.gnn_data import create_pyg_data
 
 
 def build_cell_graph_data(ais_labels, intensity_image, gt_labels=None,
                           microsam_npz_path=None, display_image=None,
-                          min_overlap_frac=0.5, **extract_kwargs):
+                          min_overlap_frac=0.5, cell_type_rule=None, **extract_kwargs):
     """Build one PyG graph from an AIS label map.
 
     Args:
@@ -29,6 +30,12 @@ def build_cell_graph_data(ais_labels, intensity_image, gt_labels=None,
         display_image: optional image stored as `data.image` for the prediction
             overlays in `gnn_train._log_figures` (2D grayscale or (H, W, 3) RGB).
         min_overlap_frac: GT-overlap threshold for fragment assignment.
+        cell_type_rule: optional per-image rule attaching `data.node_type` for the node
+            classification head -- either {"all": "hyphal"} or
+            {"metric": "mean_width", "threshold": <px>}. Requires `gt_labels`; ignored
+            without it, since there is nothing to derive a type from. The same
+            `min_overlap_frac` decides background for BOTH the node types and the edge
+            labels: one split feeds both.
         **extract_kwargs: forwarded to `extract_cell_graph` (e.g. k, contact_tau).
     """
     node_df, centroids, node_bboxes, edge_df, edge_index = extract_cell_graph(
@@ -45,6 +52,12 @@ def build_cell_graph_data(ais_labels, intensity_image, gt_labels=None,
     fragment_labels = np.unique(ais_labels)
     fragment_labels = fragment_labels[fragment_labels != 0]
 
+    # Requires GT: the type comes from the GT cell a fragment was assigned to.
+    node_types = None
+    if cell_type_rule is not None and gt_labels is not None:
+        node_types = node_type_labels(ais_labels, gt_labels, cell_type_rule,
+                                      min_overlap_frac=min_overlap_frac)
+
     data_list = create_pyg_data(
         edge_indices=[edge_index],
         nuclei_features_list=[node_df],
@@ -57,5 +70,6 @@ def build_cell_graph_data(ais_labels, intensity_image, gt_labels=None,
         ais_labels_list=[ais_labels],
         gt_labels_list=None if gt_labels is None else [gt_labels],
         fragment_labels_list=[fragment_labels],
+        node_types_list=None if node_types is None else [node_types],
     )
     return data_list[0]

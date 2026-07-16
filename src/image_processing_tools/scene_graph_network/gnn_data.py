@@ -107,6 +107,7 @@ def create_pyg_data(
     ais_labels_list=None,
     gt_labels_list=None,
     fragment_labels_list=None,
+    node_types_list=None,
     max_edge_length_neg=None,
     length_col_idx=1,
 ):
@@ -138,6 +139,9 @@ def create_pyg_data(
         fragment_labels_list (list, optional): Per-graph (num_nodes,) array giving
             each node's AIS label, in node order. Attached as `data.fragment_labels`;
             required alongside `ais_labels_list` to map nodes back onto pixels.
+        node_types_list (list, optional): Per-graph (num_nodes,) int array of node-type
+            class ids in regionprops order, attached as `data.node_type` and consumed by
+            the node classification head. Absent means edge-only training.
         max_edge_length_neg (float, optional): If set, NEGATIVE edges whose length
             (column `length_col_idx` of `edge_attr`, already normalized by
             avg_nucleus_length upstream) exceeds this value are dropped to sparsify
@@ -223,6 +227,9 @@ def create_pyg_data(
             data.gt_labels = np.asarray(gt_labels_list[i]).astype(np.uint16)
         if fragment_labels_list is not None:
             data.fragment_labels = np.asarray(fragment_labels_list[i]).astype(np.int32)
+        if node_types_list is not None:
+            # int64: a class index for CrossEntropyLoss, never a float target.
+            data.node_type = torch.as_tensor(node_types_list[i], dtype=torch.long)
 
         if use_microsam:
             npz_path = Path(microsam_paths_list[i])
