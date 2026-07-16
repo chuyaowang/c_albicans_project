@@ -1,0 +1,89 @@
+import numpy as np
+import pytest
+
+from image_processing_tools.scene_graph_network.cell_type_labels import (
+    CELL_TYPE_METRICS, NODE_CLASSES, gt_cell_types, node_type_labels,
+)
+
+
+def _two_cell_gt():
+    """GT with one thin filament (label 1) and one fat blob (label 2)."""
+    gt = np.zeros((60, 60), dtype=np.int32)
+    gt[10:12, 5:55] = 1        # 2 px thick, 50 long  -> mean_width ~2
+    gt[30:50, 20:40] = 2       # 20x20 blob           -> mean_width ~20
+    return gt
+
+
+def test_mean_width_separates_filament_from_blob():
+    gt = _two_cell_gt()
+    types = gt_cell_types(gt, {"metric": "mean_width", "threshold": 8.0})
+    assert types[1] == "hyphal"
+    assert types[2] == "epithelial"
+
+
+def test_all_rule_ignores_shape():
+    """A hyphae-only image has no epithelial population to threshold against."""
+    gt = _two_cell_gt()
+    types = gt_cell_types(gt, {"all": "hyphal"})
+    assert types == {1: "hyphal", 2: "hyphal"}
+
+
+def test_direction_is_carried_by_the_metric():
+    """axis_ratio is hyphal-when-high; mean_width is hyphal-when-low. Same cell, both agree."""
+    gt = _two_cell_gt()
+    by_width = gt_cell_types(gt, {"metric": "mean_width", "threshold": 8.0})
+    by_ratio = gt_cell_types(gt, {"metric": "axis_ratio", "threshold": 5.0})
+    assert by_width[1] == by_ratio[1] == "hyphal"
+    assert by_width[2] == by_ratio[2] == "epithelial"
+
+
+def test_every_metric_declares_a_valid_direction():
+    for name, (fn, direction) in CELL_TYPE_METRICS.items():
+        assert direction in ("low", "high"), f"{name} has direction {direction!r}"
+
+
+def test_background_fragment_gets_class_zero():
+    gt = _two_cell_gt()
+    ais = np.zeros((60, 60), dtype=np.int32)
+    ais[10:12, 5:30] = 1       # on the filament
+    ais[30:50, 20:40] = 2      # on the blob
+    ais[0:5, 0:5] = 3          # overlaps no GT at all -> background
+
+    out = node_type_labels(ais, gt, {"metric": "mean_width", "threshold": 8.0},
+                           min_overlap_frac=0.1)
+    assert out.tolist() == [NODE_CLASSES["hyphal"],
+                            NODE_CLASSES["epithelial"],
+                            NODE_CLASSES["background"]]
+
+
+def test_fragment_inherits_gt_cell_type_not_its_own_shape():
+    """The whole point: a ROUND fragment of a filament is still hyphal.
+
+    If the type were read off the fragment, this fragment would be called epithelial and
+    the task would collapse into a restatement of the existing node features.
+    """
+    gt = np.zeros((60, 60), dtype=np.int32)
+    gt[10:12, 5:55] = 1                      # thin filament
+    ais = np.zeros((60, 60), dtype=np.int32)
+    ais[10:12, 20:22] = 1                    # a 2x2 SQUARE chunk of it
+
+    out = node_type_labels(ais, gt, {"metric": "mean_width", "threshold": 8.0},
+                           min_overlap_frac=0.1)
+    assert out.tolist() == [NODE_CLASSES["hyphal"]]
+
+
+def test_node_order_matches_regionprops_ascending_labels():
+    gt = _two_cell_gt()
+    ais = np.zeros((60, 60), dtype=np.int32)
+    ais[30:50, 20:40] = 7      # blob, high label
+    ais[10:12, 5:30] = 2       # filament, low label
+
+    out = node_type_labels(ais, gt, {"metric": "mean_width", "threshold": 8.0},
+                           min_overlap_frac=0.1)
+    # regionprops yields label 2 then label 7, so filament first.
+    assert out.tolist() == [NODE_CLASSES["hyphal"], NODE_CLASSES["epithelial"]]
+
+
+def test_unknown_metric_raises():
+    with pytest.raises(KeyError):
+        gt_cell_types(_two_cell_gt(), {"metric": "not_a_metric", "threshold": 1.0})
