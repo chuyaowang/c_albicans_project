@@ -118,6 +118,22 @@ Each stage already works except the review step. The proposal is to **close the 
 
 **7 of 75** and **2 of 12** predicted cells cannot exist biologically. Recycling those unsupervised would teach micro-SAM to produce them. **With an expert in the loop the data entering fine-tuning is corrected, not predicted** — so it is ground truth, and the accumulation problem does not arise. The confidence gate and the topology check stop being safety mechanisms and become **triage**: surface the low-probability and structurally-impossible cells *first*, because those are where the expert's attention is worth most.
 
+### Better segmentation removes failures the GCN cannot fix
+
+The loop is usually argued for as *more training data*. The stronger argument is that **fine-tuning micro-SAM attacks the GCN's input**, and two of the three AIS failure modes are ones the merge network cannot properly address at all:
+
+| AIS failure | Can the GCN fix it? |
+| --- | --- |
+| **Oversegmentation** — one cell split into fragments | **Yes.** This is precisely its job, and it does it: edge AUC 0.88. |
+| **Background called a cell** | **Barely.** The node head was built for this and reaches only **background F1 0.41** ([§11](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#11.%20Node%20type%20classification)). It flags some, unreliably. |
+| **Undersegmentation** — one mask fusing two GT cells | **No — structurally impossible.** |
+
+**Undersegmentation is the important one.** The GCN only ever *merges* fragments; it has no operation that splits one. A mask fusing two cells cannot be repaired by any edge prediction, however good the model gets. Worse, it is not merely unhandled — **it silently corrupts the labels**: majority overlap assigns the fused mask to one of the two cells ([Not addressed: under-segmentation](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Not%20addressed:%20under-segmentation)), so the other cell's supervision is quietly wrong and nothing downstream can detect it.
+
+**Only a better segmenter fixes that.** This reframes the loop's payoff: each round of fine-tuning does not just hand the GCN more examples, it hands it a **cleaner problem** — fewer background fragments to reject, fewer fused masks poisoning the labels, and a candidate graph whose nodes are more often real cells. The GCN's task gets easier as the segmenter improves, which is a different and more durable mechanism than simply training the GCN harder.
+
+It also means the two models improve on **different** axes rather than competing: micro-SAM removes the failures the GCN cannot express, and the GCN supplies the whole-cell targets micro-SAM needs to learn from. That mutual dependency is the actual argument for closing the loop, and it does not depend on the GCN ever getting much better than it is now.
+
 ### The export already exists; the editor does not
 
 Every CV/overfit run already writes the review surface as a sidecar:

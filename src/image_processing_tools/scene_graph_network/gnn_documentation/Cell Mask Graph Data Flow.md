@@ -227,6 +227,10 @@ A GT cell represented by a single fragment (not oversegmented) has a one-node MS
 
 If one AIS mask fuses two GT cells, majority overlap assigns it to one cell; the GNN only *merges* fragments, never splits them.
 
+⚠️ **This is unfixable in this pipeline, and it is not silent-but-harmless — it corrupts the labels.** There is no split operation, so no edge prediction can ever separate a fused mask; and because majority overlap hands the mask to *one* of the two cells, the **other cell's supervision is quietly wrong** — it loses the region it should own, and the true edges through that region are never generated. Nothing downstream detects this: the graph is built as if the assignment were correct.
+
+The only remedy is a better segmenter. This is the strongest argument for [fine-tuning micro-SAM in the loop](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md): oversegmentation is what the GCN is *for*, background fragments it handles poorly (background F1 0.41), and under-segmentation it cannot express at all — so improving AIS is the only path for two of the three failure modes.
+
 ---
 
 ## Inference merge
