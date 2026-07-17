@@ -86,6 +86,53 @@ This layout places the "boundary" edges near the top of each class group and the
 - **Why:** The goal is to compare *which features drove a given edge's prediction most strongly*. This is a within-row comparison. Scaling each row to sum to 1 makes the cell values directly interpretable as each feature's proportional contribution to that individual edge's classification. A per-column normalisation would instead answer a different question ("which edges relied most heavily on a given feature") and would prevent cross-feature comparison within a single edge.
 - **Caveat:** Because log-transformation is applied before normalisation, cell values represent shares of *log-attribution* rather than raw attribution. The log scale suppresses extreme dominance by single features and keeps smaller contributions visible, which is the right trade-off for visual diagnosis. To inspect raw attribution magnitudes, use the `attr_matrix` returned by `compute_per_edge_attributions` directly.
 
+## 3. Predicted-probability violin
+
+`plot_probability_violin` draws the distribution of predicted probability for each held-out
+graph, split by ground-truth label, with the fold's decision threshold across it.
+
+### Why split by true label, not by TP/TN/FP/FN
+
+TP and FN are both label-1 edges, separated only by the threshold; FP and TN are both
+label-0 edges, likewise. Plotting the four classes apart would draw each true-label
+distribution twice, sliced at the cut — a picture of the threshold, not of the model.
+Grouping by what each edge *is* shows the two things that matter together: how far apart the
+model pushes true and false edges, and where the cut happens to land between them.
+
+### What it diagnoses
+
+Saturation reads directly. A model that has collapsed onto one prediction renders as a flat
+line rather than a distribution, which is the visual counterpart of the `Diag/Pred_Std_Test`
+scalar. Overlap between the two violins is the model's real error budget: no threshold can
+separate what the model did not separate. Each violin is annotated with its mean, standard
+deviation and n.
+
+## 4. Attention parallel coordinates
+
+`plot_attention_parallel_coords` draws two vertical axes — layer-1 and layer-2 attention —
+with every directed edge a marker on each, joined by a line coloured by TP / TN / FP / FN.
+
+### Why parallel coordinates
+
+The question is whether the two GCN layers attend to the same edges, and whether attention
+tracks correctness. That is a per-edge relationship between two variables plus a class, and a
+scatter of `a1` vs `a2` loses the identity of the line; parallel coordinates keep each edge a
+single readable object across both layers. A rising line means layer 2 weights that edge more
+than layer 1 did.
+
+### Draw order
+
+Classes are drawn worst-populated-last, and TN is drawn faint. The candidate graph is
+fully connected, so negatives dominate by construction and would otherwise bury the handful
+of TP / FP / FN lines that carry the signal.
+
+### The CSV
+
+`attention_dataframe` backs both the figure and an `attention_graph_<id>.csv` written beside
+the fold's event file, so the exported numbers and the plotted ones cannot drift apart. The
+frame carries one row per directed edge: `edge_idx`, `src`, `tgt`, `a1`, `a2`, `prob`,
+`true_label`, `edge_class`.
+
 ## Design decisions
 
 ### Test graphs only
@@ -111,6 +158,11 @@ All three panels (PCA, PLS-DA, attribution heatmap) are rendered into a single c
 | Figure | TensorBoard tag |
 | --- | --- |
 | Combined interpretation figure | `Interpretation/Graph_<id>` |
+| Predicted-probability violin | `Probabilities/Graph_<id>` |
+| Attention parallel coordinates | `Attention/Graph_<id>` |
+
+Alongside the fold's event file, `attention_graph_<id>.csv` carries the same per-edge
+attention table the parallel-coordinates figure is drawn from.
 
 `<id>` is the original dataset index of the test graph (same identifier used in `Predictions/Graph_<id>`), so the prediction overlay and the interpretation figure can be opened side by side in TensorBoard.
 

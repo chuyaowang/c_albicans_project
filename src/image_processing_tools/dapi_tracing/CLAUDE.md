@@ -114,6 +114,9 @@ The project uses a combination of `tqdm` for real-time console monitoring and `T
   * False Negatives
   * True Negatives
   * They also overlay the actual predicted probabilities and intermediate GCN layer attention scores (`A1`, `A2`) directly on the image. These generated figures are logged directly to TensorBoard under the `Predictions/Graph_<id>` tag.
+* **Per-graph diagnostics:** two further figures are logged for each held-out graph at the best epoch, described in [GCN Model Interpretation](gnn_documentation/GCN%20Model%20Interpretation.md):
+  * `Probabilities/Graph_<id>` — predicted probability split by **ground-truth label** (not by TP/TN/FP/FN, which would slice each true-label distribution at the threshold rather than show the model), with the fold's threshold drawn across. Saturation reads directly: a collapsed model renders as a flat line.
+  * `Attention/Graph_<id>` — parallel coordinates of each directed edge's layer-1 and layer-2 attention, coloured by TP/TN/FP/FN, with TN faint since negatives dominate a fully connected candidate graph. The same table is exported beside the event file as `attention_graph_<id>.csv`, so figure and export cannot drift.
 
 ## 7. Claude interaction guidelines
 
