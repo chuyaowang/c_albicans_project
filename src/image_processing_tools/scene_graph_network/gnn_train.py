@@ -722,6 +722,14 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
     has_pred_figs = (
         hasattr(test_dataset[0], 'image') and hasattr(test_dataset[0], 'centroids')
     )
+    if not has_pred_figs:
+        # Skipping is correct -- the nuclei pipeline carries no label maps -- but it costs
+        # the prediction overlays AND the 2x2 merge figure, and the only symptom is their
+        # absence from TensorBoard hours later. Say so.
+        missing = [a for a in ('image', 'centroids') if not hasattr(test_dataset[0], a)]
+        print(f"[warn] Graphs carry no {' or '.join(missing)}; skipping the prediction "
+              f"overlays and the merge figure. Pass display_image= to "
+              f"build_cell_graph_data to get them.")
 
     model.eval()
 
