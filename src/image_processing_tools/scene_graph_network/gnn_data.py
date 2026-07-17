@@ -205,6 +205,29 @@ def create_pyg_data(
         )
         data = T.ToUndirected()(data)
 
+        # ToUndirected copies each edge_attr row verbatim onto the reverse edge. That is
+        # right for eight of the ten features -- they are symmetric by construction (min/max,
+        # |cos|, a correlation) -- but node1_angle_diff and node2_angle_diff are computed
+        # against the row's own (source, target). The producers emit each pair once with
+        # source < target, so on a reverse edge the copy describes the target and the source
+        # respectively: backwards, and silently, since every value stays in range.
+        # Swap them there, so both columns mean what they are named on every direction.
+        edge_cols = list(edge_features.columns)
+        if {"node1_angle_diff", "node2_angle_diff"} <= set(edge_cols):
+            n1, n2 = edge_cols.index("node1_angle_diff"), edge_cols.index("node2_angle_diff")
+            # Keys on source > target, which identifies the copy only because every producer
+            # canonicalises to source < target. Assert it rather than trust it.
+            assert (edge_index_tensor[0] <= edge_index_tensor[1]).all(), (
+                "edge_attr direction fix expects each pair emitted once with source < "
+                "target; got an edge with source > target, so the reverse edges cannot be "
+                "identified by index order."
+            )
+            rev = data.edge_index[0] > data.edge_index[1]
+            if rev.any():
+                swapped = data.edge_attr[rev].clone()
+                swapped[:, [n1, n2]] = swapped[:, [n2, n1]]
+                data.edge_attr[rev] = swapped
+
         # Attach original image and centroids for visualization later.
         # Centroids are promoted to a (num_nodes, 2) float tensor so PyG can
         # cat them across a batch (needed for RoIAlign in the visual branch).
