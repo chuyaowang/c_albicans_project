@@ -164,6 +164,15 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
 
     device = next(model.parameters()).device
 
+    # Asking for a node loss from a model with no node head would leave node_loss at 0.0
+    # for every epoch -- which reads in the logs exactly like a converged node head.
+    # simple_gnn raises for the mirror-image mistake; match it rather than train nothing.
+    if node_loss_weight > 0 and not getattr(model, "predict_node_type", False):
+        raise ValueError(
+            "node_loss_weight > 0 requires Model(predict_node_type=True); this model has "
+            "no node head, so the node loss would silently stay 0.0."
+        )
+
     for data in loader:
         data = data.to(device)
 
@@ -173,7 +182,7 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
 
         # 1. Get predictions for all edges in the batch. The model's forward pass handles this.
         # Node logits only when the head is on AND weighted in; otherwise the old path.
-        want_nodes = node_loss_weight > 0 and getattr(model, "predict_node_type", False)
+        want_nodes = node_loss_weight > 0      # the head's presence is guaranteed above
         if want_nodes:
             pred, node_logits = model(data, return_node_logits=True)
         else:

@@ -1,3 +1,4 @@
+import pytest
 import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -87,3 +88,12 @@ def test_node_loss_weight_scales_the_contribution():
     torch.manual_seed(0)
     b = _fit(m2, node_loss_weight=1.0)
     assert a[0] != b[0]     # total loss differs
+
+
+def test_node_loss_weight_without_the_head_raises():
+    """A model with no node head would report node_loss 0.0 forever, which is
+    indistinguishable in the logs from a converged head. Fail loudly instead.
+    """
+    model = Model(hidden_channels=16, dropout_p=0.0)   # no predict_node_type
+    with pytest.raises(ValueError, match="predict_node_type"):
+        _fit(model, node_loss_weight=1.0)
