@@ -110,6 +110,10 @@ Node boxes are squares of side `node_box_size = 150` px centered on each centroi
 
 **Mask-bbox variant.** `_node_boxes` / `_edge_boxes` take an optional `node_bboxes` argument. When `data.node_bboxes` `(N,4)` is present (the cell-fragment pipeline), node boxes are each fragment's mask bbox padded by `node_bbox_pad_frac`, and edge boxes are the union of the two endpoints' padded bboxes — replacing the centroid-square / centroid-bbox defaults. When it is absent (the nuclei pipeline) the behaviour above is used, so a single code path serves both.
 
+**Every edge box is computed twice.** `_edge_boxes` takes the min/max union of its two endpoints' boxes, which is **order-independent** — so the `A → B` and `B → A` rows of an undirected pair produce *identical* boxes. Since `T.ToUndirected()` emits both directions, **half of the edge RoIs are duplicates**. See [Edge RoI deduplication](#Edge%20RoI%20deduplication) for what is done about it.
+
+Note the asymmetry with the tabular features: `edge_attr` rows for the two directions are **not** identical (`node1_angle_diff` / `node2_angle_diff` swap — see [GCN Data Flow](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Data%20Flow.md#Data%20preprocessing)), but the visual box genuinely is. The visual branch has no notion of direction — it crops a region of the image, and the region does not care which way you traverse it.
+
 ### RoIAlign
 
 `spatial_scale = 1 / pixels_per_feature = 0.1` maps pixel-coordinate boxes into the `(256, 256, 256)` feature map. For each RoI, torchvision:
@@ -120,6 +124,30 @@ Node boxes are squares of side `node_box_size = 150` px centered on each centroi
 4. **Average-pools the 4 sampled values per bin** to produce one activation per bin.
 
 The result is `(K, 256, 7, 7)` — `(N, 256, 7, 7)` for node patches and `(E, 256, 7, 7)` for edge patches.
+
+### Edge RoI deduplication
+
+Because an edge's box is order-independent, the two directions of each pair crop the **same** region and push the **same** patch through the same CNN. Half the edge-branch work was redundant. `_visual_features` now crops and encodes each undirected pair **once**, then scatters the result back to both directions (`simple_gnn.py:397-413`):
+
+```python
+u, v = edge_index[0], edge_index[1]
+# centroids.size(0) is the batch's total node count, so node ids never
+# collide across graphs -- this key is unique per undirected pair in the batch.
+pair_key = torch.minimum(u, v) * centroids.size(0) + torch.maximum(u, v)
+_, inverse, = torch.unique(pair_key, return_inverse=True)[:2]
+
+# One representative row per pair. Any occurrence will do -- they share a box.
+n_pairs = int(inverse.max().item()) + 1 if inverse.numel() else 0
+rep = torch.zeros(n_pairs, dtype=torch.long, device=inverse.device)
+rep.scatter_(0, inverse, torch.arange(inverse.numel(), device=inverse.device))
+
+edge_patches = roi_align(feat, edge_rois[rep], ...)   # E/2 rows, not E
+edge_visual  = self.edge_visual_cnn(edge_patches)[inverse]   # scattered back to E
+```
+
+**Why the key is safe:** `pair_key` multiplies by the **batch's total node count**, not a per-graph count, so ids from different graphs in the batch cannot collide. `rep` picks an arbitrary occurrence of each pair — legitimate precisely because both occurrences share a box.
+
+⚠️ **This is not bit-identical to the pre-dedup path.** Halving the batch changes the offsets at which patches sit in the batched convolution, and float32 addition is not associative, so identical patches reduce in a different order and results drift by **~3e-8**. That is far below the feature scale and below anything the downstream LayerNorm'd fusion could notice, but it is not zero: `tests/scene_graph_network/test_edge_visual_dedup.py` pins the tolerance at `atol=1e-6` rather than asserting equality. Runs before and after will not reproduce each other exactly.
 
 ### VisualCNN
 

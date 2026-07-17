@@ -155,13 +155,19 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
 - **Sidecar files** written next to the events file, for downstream analysis outside TensorBoard:
     - `attention_graph_<id>.csv` — one row per directed edge: `edge_idx, src, tgt, a1, a2, prob, true_label, edge_class`. Built from the same DataFrame that backs the parallel-coordinates figure, so plot and CSV cannot drift.
     - `prediction_graph_<id>.graphml` — the predicted-edge graph the merge was read from, nodes carrying `ais_label` / `cell` / centroid and edges carrying `prob` / `true_label` / `edge_class` / `a1` / `a2`. GraphML rather than a pickle so igraph / Cytoscape / Gephi can open it (and networkx dropped `write_gpickle` in 3.0).
-  - **The background is a channel stack, not one fixed modality.** `data.image` may carry DIC alongside one or more fluorescence channels, so `plot_edge_predictions` dispatches on shape rather than assuming a source (`gnn_train.py:353-372`):
+  - **The background is a channel stack, not one fixed modality.** `data.image` may carry DIC alongside one or more fluorescence channels, so the layout is read from the shape rather than assumed. The dispatch lives in `_imshow_microscopy` (`gnn_train.py:421-447`) and is shared by all three figure families — edge predictions, the merge 2×2, and the node-type 2×2 — so they cannot render the same graph differently:
 
     | `data.image` shape | Rendered as |
     | --- | --- |
-    | `(H, W)` or `(H, W, 1)` | grayscale |
-    | `(H, W, 2)` | composite — channel 0 (DAPI) in blue, channel 1 (DIC) in grayscale, so both are visible at once |
-    | `(H, W, 3)` | passed to `imshow` as-is (RGB) |
+    | `(H, W)` or `(H, W, 1)` | grayscale, via the colormap's own autoscaling |
+    | `(H, W, 2)` | composite — channel 0 (DAPI) in blue over channel 1 (DIC) in grayscale, so both are visible at once |
+    | `(H, W, 3+)` | RGB from the first three channels, **each percentile-stretched independently** |
 
-    The 2-channel composite percentile-stretches each channel independently (1st–99th) before compositing, so a dim fluorescence channel stays visible against DIC. Nuclei-era graphs are typically single-channel DAPI; fragment graphs typically carry DIC plus fluorescence.
+    **Why multi-channel layouts must be stretched: they bypass the colormap.** Grayscale goes through a colormap, which autoscales to the data's own range, so a raw 16-bit channel renders correctly. RGB does not — `imshow` accepts RGB only as `uint8` or float in `[0, 1]` and **silently clips** anything else (it emits `Clipping input data to the valid range for imshow with RGB data`, which is easy to miss in a training log). A 16-bit stack handed over raw therefore rendered **almost entirely white**. `_stretch_channel` (`gnn_train.py:408`) maps each channel's 1st–99th percentile to `[0, 1]` first.
+
+    **Per channel, not jointly.** Channels differ in absolute intensity by large factors, so a joint stretch lets the brightest channel dominate and washes the others out. Stretching each independently keeps a dim fluorescence channel visible next to a bright DIC one.
+
+    ⚠️ **This was a display bug only.** It affected the logged figures and nothing else: the features are read from the separately-built summed intensity image, never from `data.image`. No metric, feature or trained model was affected, and no run needed re-running for it.
+
+    Nuclei-era graphs are typically single-channel DAPI; fragment graphs typically carry DIC plus fluorescence.
 - **Training-embedding overlay — CV only.** The `Interpretation/Graph_<id>` PCA / PLS-DA scatter plots can overlay the *training* fold's embeddings as open dashed circles colored by true label (see [GCN Model Interpretation](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Interpretation.md)). `n_fold_validation` passes the training fold in when `log_train_embeddings=True` (default, `gnn_train.py:753`); `train_overfit_test` passes `train_dataset=None` (`gnn_train.py:865`) **by design** — its training set *is* its eval set, so the overlay would just redraw the same points.
