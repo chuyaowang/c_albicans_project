@@ -1017,7 +1017,7 @@ def _apply_feature_zscore(train_dataset, test_dataset=None):
             data.edge_attr[:, 0] = (data.edge_attr[:, 0] - edge_mean[0]) / (edge_std[0] + 1e-7)
 
 
-def _log_cv_aggregate(log_dir, experiment, pooled_preds, mean_threshold):
+def _log_cv_aggregate(log_dir, pooled_preds, mean_threshold):
     """Write the across-fold artifacts to `<repeat>/aggregate/`.
 
     A sibling of the fold directories, so TensorBoard lists it alongside them
@@ -1054,10 +1054,16 @@ def _log_cv_aggregate(log_dir, experiment, pooled_preds, mean_threshold):
 
     # Per-fold metrics table. summarize_cv_logs walks <root>/<repeat>/fold_<k>,
     # so it is handed the parent of this repeat and filtered back down to it.
+    #
+    # Filter on the directory the logs actually went to, NOT on `experiment`: the experiment
+    # string may itself contain a slash (the nuclei notebook uses ".../repeat_<i>" to group
+    # repeats of one config), in which case it is a path fragment rather than the repeat's
+    # name and matches nothing -- silently emptying the frame.
+    repeat_name = Path(log_dir).name
     try:
         df = summarize_cv_logs(Path(log_dir).parent)
         if not df.empty and 'repeat' in df.columns:
-            df = df[df['repeat'] == experiment]
+            df = df[df['repeat'] == repeat_name]
         if df.empty:
             print("[warn] No fold metrics found for cv_summary.csv")
         else:
@@ -1205,7 +1211,7 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
     print(f"Average Test AUC: {avg_auc:.4f}")
     print(f"Average Best Threshold: {avg_thresh:.4f}")
 
-    _log_cv_aggregate(log_dir, experiment, pooled_preds, avg_thresh)
+    _log_cv_aggregate(log_dir, pooled_preds, avg_thresh)
 
     # Each class averaged only over the folds that actually contained it -- images with no
     # epithelial cells must not drag an epithelial average toward 0.
