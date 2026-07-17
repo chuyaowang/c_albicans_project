@@ -2,11 +2,13 @@
 
 > How the model is trained to achieve the desired learning outcome. Every decision below links to its supporting evidence in [GCN Model Experiments](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md).
 >
-> **Scope — applies to both pipelines.** Every training decision on this page is **shared and live**: the loss, optimizers, cross-validation and normalization are identical for the historical **nuclei** pipeline and the current **cell-fragment merge** pipeline. Caveat: the supporting experiments were run on nuclei data and have not been re-measured on fragments (see [GCN Model Experiments](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md)). Full breakdown: [Nuclei vs. cell-fragment](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Nuclei%20vs.%20cell-fragment%20—%20what%20carries%20over).
+> **Scope — applies to both pipelines, with one exception.** The loss, optimizers, cross-validation and normalization are **shared and live**: identical for the historical **nuclei** pipeline and the current **cell-fragment merge** pipeline. The one exception is the [node-type cross-entropy](#4.%20Node-type%20cross-entropy%20(optional)) and its [balanced node sampling](#Balanced%20node%20sampling) — **fragment-only**, because only the fragment pipeline has node-type labels. Caveat: the supporting experiments were run on nuclei data and have not been re-measured on fragments (see [GCN Model Experiments](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md)). Full breakdown: [Nuclei vs. cell-fragment](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Nuclei%20vs.%20cell-fragment%20—%20what%20carries%20over).
 
 ## Loss
 
-The loss is **BCE with label smoothing, on sampled edges** — a pure classification objective. It was historically a *composite* of BCE + a structural degree penalty, but the degree term is now **disabled** (see [§2](#2.%20Sparsity-aware%20degree%20penalty%20(disabled))), so no structural constraint enters the loss.
+$$\mathcal{L} = \underbrace{\text{BCE}_{\varepsilon=0.1}}_{\text{always}} \;+\; \underbrace{w_{\text{deg}} \cdot \mathcal{L}_{\text{degree}}}_{w_{\text{deg}}\,=\,0\ \text{— disabled}} \;+\; \underbrace{w_{\text{node}} \cdot \mathcal{L}_{\text{node}}}_{\text{optional; } w_{\text{node}}\,=\,1.0\ \text{when on}}$$
+
+(`gnn_train.py:289`.) In the default configuration only the first term is live, making the loss **BCE with label smoothing on sampled edges** — a pure classification objective. The degree term is **disabled** (see [§2](#2.%20Sparsity-aware%20degree%20penalty%20(disabled))), so **no structural constraint enters the loss**. The node term (§4) is an **auxiliary classification** objective, not a structural one: it constrains what the representation must encode, never which edges may exist.
 
 ### 1. BCE (classification) loss with label smoothing
 
@@ -38,12 +40,30 @@ The loss is **BCE with label smoothing, on sampled edges** — a pure classifica
 - **Occasional cycles** still appear but are rare. In the nuclei pipeline they were pruned manually downstream. ⚠️ For **cell fragments** cycles remain relevant — the fragment chain order encodes growth direction, and a cyclic subnetwork yields no order at all. The [inference merge](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Inference%20merge) now **counts** them per run (`Merge/Graph_<id>_summary`) rather than preventing them; whether to add a structural decode is still open.
 - **Experimental basis:** See [Acyclicity](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#7.%20Acyclicity).
 
+### 4. Node-type cross-entropy (optional)
+
+- **How:** `CrossEntropyLoss` between the [Node Classifier Head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional))'s raw logits and `data.node_type`, computed on a **class-balanced subsample** of nodes (see [Balanced node sampling](#Balanced%20node%20sampling)) and added at weight `node_loss_weight`. Both runs to date used `node_loss_weight = 1.0`. Off by default (`0.0`).
+- **Why combine rather than train separately:** the point is a **joint representation**. The trunk is shared, so the node gradient shapes the embeddings the edge classifier reads. That is the whole mechanism by which "a true edge cannot span background↔cell or epithelial↔hyphal" gets learned — implicitly, from the fact that one representation must serve both tasks. Two separately-trained models would share nothing and learn none of it.
+- **Why the weight is 1.0:** untuned. It was set to 1.0 as the neutral starting point and never swept; the improvement was measured against a matched baseline at that value. Whether the edge task would do better at a lower weight is **unknown and untested**.
+- **Guard:** `node_loss_weight > 0` against a model built without `predict_node_type=True` **raises** (`gnn_train.py:173`) rather than silently training with a loss term that can never be computed.
+  > ⚠️ **The mirror case is not guarded.** The node loss is computed only `if want_nodes and node_type is not None` (`gnn_train.py:237`), so a dataset built **without** `node_types_list` trains happily at `node_loss_weight=1.0` with $\mathcal{L}_{\text{node}}$ pinned at **0** — the head learns nothing and nothing complains. The tolerance is deliberate (the nuclei pipeline and every older dataset have no `node_type`), but it means the dataset is what guarantees the head is trained. If `Loss/Node_Train` is flat at zero, suspect the dataset first.
+- **Experimental basis:** [GCN Model Experiments §11](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md).
+
 ## Negative edge sampling
 
 - **How:** For every graph in every batch, sample negative (label-0) edges so the positive-to-negative ratio is fixed. Loss is computed only on the positive edges + the sampled negatives.
 - **Why:** The graphs in the dataset have very different positive ratios (67% for 3-node graphs, 33% for 6-node graphs). Training on all edges means the loss landscape shifts depending on which graphs land in the training fold, making it difficult for the model to form a stable decision boundary. Fixed-ratio sampling gives the model a consistent class distribution regardless of graph mixture.
 - **Why not weighted BCE — the approach this replaced:** Weighted BCE was tried *first*. It re-weights the loss by $w^{+} = N_{\text{neg}}/N_{\text{pos}}$ measured on the training fold, so the model's implied class prior remains a function of the fold's graph mixture — the mismatch changes sign rather than disappearing (train on 6-node graphs, over-predict on a balanced 3-node test graph). Sampling is different **in kind**: it does not correct a variable ratio with a coefficient, it makes the ratio a constant, leaving no fold-dependent prior to transfer. See [Weighted BCE](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#Weighted%20BCE%20—%20tried%20first,%20before%20negative%20sampling).
 - **Experimental basis:** [Class imbalance](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#8.%20Class%20imbalance).
+
+## Balanced node sampling
+
+Applies only when the [node-type cross-entropy](#4.%20Node-type%20cross-entropy%20(optional)) is on. `sample_balanced_nodes` (`node_sampling.py`).
+
+- **How:** per batch, take the **rarest class present** as the anchor and draw `ratio × n_min` nodes from every present class, capped at what each class actually has. `node_sample_ratio = 1.0` (both runs to date) gives exactly equal counts. **Resampled every epoch**, so no node is permanently discarded — the majority classes rotate through.
+- **Why:** exactly the argument that governs [negative edge sampling](#Negative%20edge%20sampling), applied to a 3-class problem. **The model must not learn a prior on the class distribution.** Sampling makes the ratio a constant instead of correcting a variable one with a coefficient.
+- **Why not class weights:** the per-image class ratios swing enormously — background is **2.5% in image 1 and 35.6% in image 2**; hyphal is 76.0% overall but 97.5% in image 1 (see [Node Type Label Construction](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Node%20Type%20Label%20Construction.md#4.%20Node%20labels)). A weight fitted on the training folds is a **fold statistic**, so under leave-one-out it actively mismatches the held-out image rather than correcting for it — the same failure that sank [weighted BCE](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#Weighted%20BCE%20—%20tried%20first,%20before%20negative%20sampling) on the edge task. **Do not reintroduce class weighting here.**
+- **"Present" is per batch, not per dataset.** Images 0 and 1 contain **no epithelial nodes at all**, so a batch drawn from them anchors on two classes only. The head is never asked to hallucinate a class the batch cannot show it, and `node_type_metrics` mirrors this by reporting only the classes present in `y_true`.
 
 ## Symmetric prediction enforcement
 
@@ -138,8 +158,20 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
 
   **Why `aggregate/` is a sibling of the folds, not the repeat dir itself:** TensorBoard then lists it as a peer run (`fold_1`, `fold_2`, …, `aggregate`) instead of a confusing parent run rendered as `.`; and `summarize_cv_logs` skips it for free, because it matches fold directories on `fold_(\d+)$` and ignores anything else.
 - **Scalars:** all metrics above, logged per epoch.
+- **Node-type scalars** (only when the [node head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)) is on):
+
+    | Tag | When | What |
+    | --- | --- | --- |
+    | `Loss/Node_Train` | per epoch | the node cross-entropy alone, before `node_loss_weight`. **Flat at zero means the dataset has no `node_type`** — see [§4](#4.%20Node-type%20cross-entropy%20(optional)) |
+    | `NodeType/Accuracy_Test`, `NodeType/F1_<class>_Test`, `NodeType/Support_<class>_Test` | CV, at `best_epoch` | per-class F1 and support on the held-out graph |
+    | `NodeType/Accuracy_Eval`, `NodeType/F1_<class>_Eval` | overfit, at `best_epoch` | the same over the training graphs |
+    | `NodeType/Summary` (text, on `aggregate/`) | end of CV | the across-fold node-type table |
+
+    ⚠️ **The suffix differs by mode** — `_Test` under cross-validation, `_Eval` under the overfit test — because they mean different things: `_Test` is a held-out graph, `_Eval` is the graphs the model trained on. A tag glob of `NodeType/*_Test` silently returns nothing on an overfit run.
+
+    **Only the classes present in the held-out graph are logged.** Images 0 and 1 have no epithelial nodes, so folds testing on them emit no `F1_epithelial_Test` at all — absence of a tag is a property of the fold, not a failure. `Support_<class>_Test` is logged alongside each F1 so a score can never be read without its denominator.
 - **Text summaries:** one `Fold Summary` entry per fold with train/test indices, chosen threshold, and final metrics — lets you recover exact fold configuration later. The overfit test logs the equivalent under `Overfit Test Summary` (best epoch, final metrics, threshold; no indices, since it trains on everything).
-- **Figures:** at final evaluation — after the best-AUC snapshot is restored — `_log_figures` renders six figures per graph. Both modes call it, so the overfit test produces them too, over its own training graphs.
+- **Figures:** at final evaluation — after the best-AUC snapshot is restored — `_log_figures` renders the figures below, per graph. Both modes call it, so the overfit test produces them too, over its own training graphs. **Not all are unconditional:** `Merge/*` needs `data.ais_labels` / `data.gt_labels`, and `NodeType/*` needs both the node head and `data.node_type`. Every figure also needs `data.image` — omit it and the overlays are skipped (with a warning; it used to be silent).
 
     | Tag | What it shows |
     | --- | --- |
@@ -150,6 +182,8 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
     | `Interpretation/Graph_<id>` | the full embedding + attribution figure |
     | `Interpretation/Graph_<id>_sampled` | the same, heatmap restricted to a balanced edge sample |
     | `Merge/Graph_<id>` | 2×2: source image, AIS fragments, GT cells, **predicted merge** ([Inference merge](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Inference%20merge)) |
+    | `NodeType/Graph_<id>` | 2×2: source image, AIS fragments, **true** node types, **predicted** node types — node-head runs only ([Node-type figures](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Interpretation.md)) |
+    | `NodeType/Graph_<id>_edge_outcomes` | each edge's TP / FN / FP / TN outcome broken down by the **types of its two endpoints** — node-head runs only |
 
 - **Text:** `Merge/Graph_<id>_summary` carries the merged-cell count and the topology tally (`singleton` / `path` / `branched` / `cyclic`) — `branched` and `cyclic` are predictions that violate the unbranched-acyclic biology, so this is the run's constraint-violation count.
 - **Sidecar files** written next to the events file, for downstream analysis outside TensorBoard:

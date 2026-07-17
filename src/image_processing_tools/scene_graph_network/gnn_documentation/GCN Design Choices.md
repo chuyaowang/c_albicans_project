@@ -57,6 +57,17 @@ This specific Multi-Layer Perceptron (MLP) block is the workhorse of the archite
 - **Why:** It mimics the human visual decision-making process. To classify if a connection is real, the network evaluates the complete local triad simultaneously: *What does the source cell look like? What does the target cell look like? And what does the physical path between them represent?*
 - **Experimental basis:** [Non-linearities and MLP depth](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#Non-linearities%20and%20MLP%20depth).
 
+## Node Classifier Head (optional)
+
+A **second** head, predicting each node's type — `background` (0) / `epithelial` (1) / `hyphal` (2) — from the same final node embedding the edge classifier reads. Off by default; enabled with `Model(predict_node_type=True, num_node_classes=3)`.
+
+- **How:** `NodeClassifier` (`simple_gnn.py:134`) is one `MLP body → Linear` over the post-residual node embedding `x_out`: `CustomLazyLinear(hidden) → LayerNorm → ReLU → Dropout → Linear(hidden, num_classes)`. It emits **raw logits**, never a softmax — `CrossEntropyLoss` applies log-softmax itself, and a softmax here would apply it twice and flatten the gradients.
+- **Why a second head rather than a feature or a filter:** the two failure modes it targets — AIS calling background regions cells, and candidate edges spanning epithelial↔hyphal masks — are both statements about *nodes*, and both imply a constraint on edges (a true edge cannot span background↔cell or epithelial↔hyphal). Feeding the type in explicitly would require *knowing* it at inference, which is the very thing being predicted. Sharing the trunk and combining the losses instead means the constraint is learned **implicitly**: the representation must serve both tasks, so it must encode what a node is in order to score its edges. **Nothing is fed in explicitly.**
+- **Where it reads from:** `x_out` — *after* the residual concatenation and both GCN layers, the same tensor the edge classifier consumes. So the two heads share every parameter below them, which is the entire point: the gradient from the node task shapes the trunk the edge task uses.
+- **The visual branch is not optional for it.** A fragment's type is a property of the *whole cell* it belongs to, not of the fragment's own shape (see [Node Type Label Construction](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Node%20Type%20Label%20Construction.md)), so tabular geometry alone cannot decide it — the head needs image context and neighbourhood message passing.
+- **Guard:** `return_node_logits=True` against a model built without the head raises rather than silently returning nothing (`simple_gnn.py:470`). Node logits are appended **last** in every return signature, including `attribution_mode`.
+- **Results:** [GCN Model Experiments §11](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md). In short — it improved edge AUC on all six folds while its own predictions stayed mediocre; it earns its place as an **auxiliary task**, not as a working node classifier.
+
 ## Overall Model Flow
 
 ### Input data
@@ -90,6 +101,7 @@ This specific Multi-Layer Perceptron (MLP) block is the workhorse of the archite
 ### Classification
 
 - The Classifier processes the final fused embeddings to output the absolute probability of a true hyphal connection.
+- **When `predict_node_type=True`, the same `x_out` also goes to the [Node Classifier Head](#Node%20Classifier%20Head%20(optional))**, which emits `(N, num_node_classes)` raw logits alongside the edge probabilities. The two heads run in parallel off one trunk; only the losses combine (see [GCN Training Choices](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Training%20Choices.md#Loss)).
 
 ## Visual branch
 

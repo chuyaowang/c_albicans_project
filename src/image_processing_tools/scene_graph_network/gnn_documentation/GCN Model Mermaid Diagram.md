@@ -2,7 +2,7 @@
 
 The following diagrams visualize the overall data flow and the internal sub-structures of the `Model` defined in `simple_gnn.py`.
 
-> **Scope — applies to both pipelines.** The architecture drawn here is **shared and live**: identical for the historical **nuclei** pipeline and the current **cell-fragment merge** pipeline. Only the input dimensions differ — `node_feature_dim=8`, `edge_feature_dim=10` for fragments (historically 6 / 6) — along with the RoI box source feeding the visual branch. Full breakdown: [Nuclei vs. cell-fragment](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Nuclei%20vs.%20cell-fragment%20—%20what%20carries%20over).
+> **Scope — applies to both pipelines, minus the node head.** The trunk drawn here is **shared and live**: identical for the historical **nuclei** pipeline and the current **cell-fragment merge** pipeline. Differences: the input dimensions (`node_feature_dim=8`, `edge_feature_dim=10` for fragments, historically 6 / 6), the RoI box source feeding the visual branch, and the **`NodeClassifier` head — fragment-only, and off by default even there** (drawn dashed below). Full breakdown: [Nuclei vs. cell-fragment](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md#Nuclei%20vs.%20cell-fragment%20—%20what%20carries%20over).
 
 ## 1. Overall Model Architecture
 
@@ -172,7 +172,21 @@ NormE2 -- "edge_attr" --> Classify
 
 Classify -- "Edge Probabilities" --> Out([Predictions])
 
+  
+
+NormX2 -- "x" --> NodeClassify["NodeClassifier<br/>optional: predict_node_type=True"]
+
+NodeClassify -- "Node Type Logits (N, 3)<br/>raw, no softmax" --> NodeOut([Node Types])
+
+  
+
+style NodeClassify stroke-dasharray: 5 5
+
+style NodeOut stroke-dasharray: 5 5
+
 ```
+
+**Both heads read the same `x`** — the post-residual, post-GraphNorm node embedding. That shared trunk is the entire mechanism of the node head: the node-type gradient shapes the representation the edge classifier reads, so the model learns what a node *is* in order to score its edges. See [Node Classifier Head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)).
 
   
 

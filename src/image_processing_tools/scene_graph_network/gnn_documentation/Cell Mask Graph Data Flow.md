@@ -55,20 +55,24 @@ The edge schema being a **positional superset** is the load-bearing design decis
 | Embedding source | `compute_microsam_features` (runs the encoder) | `load_and_stitch_saved_embeddings` (reuses AIS's saved tiled zarr) | Common core (`_stitch_embeddings`), different entry point |
 | RoIAlign, `spatial_scale`, `VisualCNN`, `FusionMLP` | — | unchanged | **Common** |
 
-### Model and training — entirely common
+### Model and training — mostly common
 
-Verified by diffing the pipelines' `simple_gnn.py`: the *only* differences are the RoI box source above and the `node_feature_dim` / `edge_feature_dim` defaults. Every design below is shared and unmodified.
+The trunk is shared and unmodified. **Two additions are now fragment-only**, so this is no longer the "identical `simple_gnn.py` plus different defaults" it once was. Verified by diffing the pipelines' `simple_gnn.py` — `dapi_tracing`'s has neither `NodeClassifier` nor `pair_key`.
 
 | Component | |
 | --- | --- |
 | GCN layer — message `[x_j − x_i ‖ edge_attr]`, attention softmax over the neighborhood, sum aggregation, MLP update | **Common** |
 | `EdgeUpdater`, GraphNorm skip connections | **Common** |
-| Symmetric prediction (`P(A→B)`/`P(B→A)` averaged), no self-loops, `T.ToUndirected()` | **Common** |
-| Loss — BCE + top-k degree penalty | **Common** |
+| Symmetric prediction (`P(A→B)`/`P(B→A)` averaged), no self-loops, `T.ToUndirected()` + the [per-direction angle swap](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Data%20Flow.md#Data%20preprocessing) | **Common** |
+| Loss — BCE with label smoothing; degree penalty **disabled** (`weight = 0`) | **Common** |
 | Optimizers (Muon for 2D hidden weights + AdamW for the rest) | **Common** |
 | `n_fold_validation`, `train_overfit_test`, per-fold z-score (no leakage) | **Common** |
 | Graph-level (inductive) train/test split | **Common** |
 | Dataset persistence (`save_pyg_dataset` / `DapiTracingDataset`) | **Common** |
+| **[Node-type head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional))** + its CE loss and balanced node sampling | **Unique** — needs `data.node_type`, which only the fragment pipeline has |
+| **[Edge RoI deduplication](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Visual%20Feature%20Data%20Flow.md#Edge%20RoI%20deduplication)** | **Unique** — a pure optimisation; applies equally to nuclei and was simply not ported |
+
+The two differ in kind. The **node head is off by default** (`predict_node_type=False`), so a fragment model built without it is architecturally the nuclei model. The **dedup is unconditional** and changes no architecture — but it is not bit-identical to the un-deduplicated path (~3e-8, see its section), so the two pipelines will not reproduce each other's numbers exactly even on identical input.
 
 ---
 
