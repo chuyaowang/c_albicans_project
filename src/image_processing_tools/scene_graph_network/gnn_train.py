@@ -24,7 +24,7 @@ from image_processing_tools.scene_graph_network.gnn_interpret import (
     collect_embeddings, classify_edges, compute_per_edge_attributions,
     plot_combined_figure, plot_pca_figure, sample_heatmap_edges,
     attention_dataframe, plot_attention_parallel_coords,
-    plot_probability_violin,
+    plot_probability_violin, plot_edge_outcome_by_node_pair,
 )
 from image_processing_tools.scene_graph_network.cell_merge_inference import (
     merge_fragments, summarize_cells,
@@ -491,6 +491,65 @@ def plot_merge_comparison(image, ais_labels, merged_labels, gt_labels=None,
     return fig
 
 
+# Background is the reject class, so it takes the alarm colour; the two real cell types get
+# cool/warm. Matches 11_Node Type Classification.ipynb, so the notebooks read alike.
+NODE_TYPE_COLORS = {0: (1.0, 0.15, 0.15), 1: (0.20, 0.45, 1.0), 2: (1.0, 0.55, 0.0)}
+NODE_TYPE_NAMES = {0: 'background', 1: 'epithelial', 2: 'hyphal'}
+
+
+def _node_type_rgb(ais_labels, fragment_labels, types, downsample=1):
+    """Paint each fragment with its type's colour. Unlabelled pixels stay black."""
+    ais_labels = np.asarray(ais_labels)
+    lut = np.zeros((int(ais_labels.max()) + 1, 3), dtype=np.float32)
+    for lab, t in zip(np.asarray(fragment_labels), np.asarray(types)):
+        lut[int(lab)] = NODE_TYPE_COLORS[int(t)]
+    return lut[ais_labels[::downsample, ::downsample]]
+
+
+def plot_node_type_comparison(image, ais_labels, fragment_labels, true_types, pred_types):
+    """2x2 panel: source image, AIS fragments, GT node types, predicted node types.
+
+    GT and prediction sit diagonally opposite so a misclassified fragment reads as a colour
+    flip in the same place. Mirrors `plot_merge_comparison`'s layout deliberately -- the two
+    figures are read side by side.
+    """
+    from skimage.color import label2rgb
+
+    true_types = np.asarray(true_types)
+    pred_types = np.asarray(pred_types)
+    fig, axes = plt.subplots(2, 2, figsize=(13, 13))
+
+    _imshow_microscopy(axes[0, 0], image, downsample=2)
+    axes[0, 0].set_title('Source image', fontsize=11)
+
+    n_frag = int(np.asarray(ais_labels).max())
+    axes[0, 1].imshow(label2rgb(np.asarray(ais_labels)[::2, ::2], bg_label=0,
+                                bg_color=(0, 0, 0)))
+    axes[0, 1].set_title(f'AIS segmentation — {n_frag} fragments', fontsize=11)
+
+    def _counts(t):
+        c = np.bincount(t, minlength=3)
+        return f'bg {c[0]} | epi {c[1]} | hyph {c[2]}'
+
+    axes[1, 0].imshow(_node_type_rgb(ais_labels, fragment_labels, true_types, 2))
+    axes[1, 0].set_title(f'Ground-truth types — {_counts(true_types)}', fontsize=11)
+
+    acc = float((pred_types == true_types).mean()) if len(true_types) else float('nan')
+    axes[1, 1].imshow(_node_type_rgb(ais_labels, fragment_labels, pred_types, 2))
+    axes[1, 1].set_title(f'Predicted types — {_counts(pred_types)}\naccuracy {acc:.3f}',
+                         fontsize=11)
+
+    for ax in axes.ravel():
+        ax.axis('off')
+    fig.legend(handles=[Line2D([0], [0], marker='s', color='none',
+                               markerfacecolor=NODE_TYPE_COLORS[k], markeredgecolor='gray',
+                               markersize=11, label=NODE_TYPE_NAMES[k])
+                        for k in (0, 1, 2)],
+               loc='lower center', ncol=3, fontsize=11, frameon=False)
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
+    return fig
+
+
 def plot_edge_predictions(image, centroids, edge_index, predictions, ground_truths=None, offset_amount=1.5, pred_probs=None, attentions=None, node_potentials=None, node_boxes=None, edge_boxes=None):
     """
     Overlays GNN edge predictions on the original microscopy image.
@@ -695,6 +754,37 @@ def _log_merge_figures(data, writer, orig_idx, pred_labels, sym_probs, true_labe
         print(f"[warn] Could not write prediction graph for {orig_idx}: {exc}")
 
 
+def _log_node_type_figures(data, writer, orig_idx, pred_types, edge_classes):
+    """Log the node-type comparison and the edge-outcome-by-type-pair bars.
+
+    Skipped when the model has no node head or the graph carries no types -- the edge-only
+    runs and the nuclei pipeline are both in that position, and neither should see these.
+    """
+    if pred_types is None:
+        return
+    ais_labels = getattr(data, 'ais_labels', None)
+    fragment_labels = getattr(data, 'fragment_labels', None)
+    true_types = getattr(data, 'node_type', None)
+    if ais_labels is None or fragment_labels is None or true_types is None:
+        return
+    true_types = true_types.cpu().numpy()
+
+    if getattr(data, 'image', None) is not None:
+        fig = plot_node_type_comparison(data.image, np.asarray(ais_labels),
+                                        np.asarray(fragment_labels), true_types, pred_types)
+        writer.add_figure(f'NodeType/Graph_{orig_idx}', fig, 0)
+        plt.close(fig)
+
+    # Grouped by the model's OWN predicted types, so this answers whether its type beliefs
+    # line up with its edge mistakes -- the question the joint task exists to settle.
+    fig = plot_edge_outcome_by_node_pair(
+        pred_types, data.edge_index.cpu().numpy(), edge_classes, NODE_TYPE_NAMES,
+        title=f'Edge outcome by predicted node-type pair — graph {orig_idx}',
+    )
+    writer.add_figure(f'NodeType/Graph_{orig_idx}_edge_outcomes', fig, 0)
+    plt.close(fig)
+
+
 def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, device,
                  train_dataset=None, column_order='grouped',
                  heatmap_sample_size=15, heatmap_seed=0):
@@ -745,10 +835,22 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
         data = test_dataset[i]
 
         # ── Single forward pass (shared by prediction overlay and interpretation) ──
+        # Node logits come from this same pass, never a second one: the node-type figure and
+        # the edge outcomes it is read against must describe one model state.
+        want_nodes = (getattr(model, 'predict_node_type', False)
+                      and getattr(data, 'node_type', None) is not None)
         with torch.no_grad():
-            raw_pred, emb, layer_attentions = model(
-                data, return_embeddings=True, return_attention=True
-            )
+            if want_nodes:
+                raw_pred, emb, layer_attentions, node_logits = model(
+                    data, return_embeddings=True, return_attention=True,
+                    return_node_logits=True
+                )
+                pred_types = node_logits.argmax(dim=-1).cpu().numpy()
+            else:
+                raw_pred, emb, layer_attentions = model(
+                    data, return_embeddings=True, return_attention=True
+                )
+                pred_types = None
             alpha1 = enforce_symmetric_predictions(
                 layer_attentions[0].squeeze(-1), data.edge_index, data.num_nodes
             )
@@ -843,6 +945,7 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             centroids_np = (centroids if has_pred_figs else None)
             _log_merge_figures(data, writer, orig_idx, pred_labels, sym_probs,
                                true_labels, edge_classes, attn_np, centroids_np)
+            _log_node_type_figures(data, writer, orig_idx, pred_types, edge_classes)
         except Exception as exc:
             import traceback
             print(f"[warn] Merge figure failed for graph {orig_idx}: {exc}")

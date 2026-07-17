@@ -962,3 +962,81 @@ def plot_attribution_heatmap(attr_matrix, probs, edge_classes, feature_names, gr
                        attr_norm, probs_s, classes_s,
                        feat_names, feat_colors, vmax, group_spans)
     return fig
+
+# Same colours the prediction overlay uses for its legend, so the two figures read alike.
+EDGE_OUTCOME_COLORS = {'TP': '#32cd32', 'FP': '#e02020', 'FN': '#ff9500', 'TN': '#4a7fd4'}
+EDGE_OUTCOME_ORDER = ['TP', 'FN', 'FP', 'TN']     # errors adjacent, in the middle
+
+
+def edge_outcome_by_node_pair(node_types, edge_index, edge_classes, class_names):
+    """Contingency of edge outcome against the pair of node types it connects.
+
+    Args:
+        node_types:   (N,) int array of per-node class ids -- predicted, not ground truth,
+                      so the result answers whether the model's own type beliefs line up
+                      with its edge mistakes.
+        edge_index:   (2, E) array.
+        edge_classes: (E,) array of 'TP'/'TN'/'FP'/'FN' from `classify_edges`.
+        class_names:  {id: name} for the node classes.
+
+    Returns:
+        (pairs, counts): `pairs` is a list of "a-b" names, sorted so the type pair is
+        order-independent; `counts` is a (len(pairs), 4) int array over EDGE_OUTCOME_ORDER.
+        Only pairs that actually occur are returned -- a pair with no edges would plot as an
+        empty bar and invite reading it as a score of zero.
+    """
+    node_types = np.asarray(node_types)
+    src, dst = np.asarray(edge_index[0]), np.asarray(edge_index[1])
+
+    keys = ['-'.join(sorted((class_names[int(node_types[u])], class_names[int(node_types[v])])))
+            for u, v in zip(src, dst)]
+    pairs = sorted(set(keys))
+    idx = {p: i for i, p in enumerate(pairs)}
+    oidx = {o: i for i, o in enumerate(EDGE_OUTCOME_ORDER)}
+
+    counts = np.zeros((len(pairs), len(EDGE_OUTCOME_ORDER)), dtype=int)
+    for k, cls in zip(keys, edge_classes):
+        counts[idx[k], oidx[str(cls)]] += 1
+    return pairs, counts
+
+
+def plot_edge_outcome_by_node_pair(node_types, edge_index, edge_classes, class_names,
+                                   title=None):
+    """Stacked bars: each node-type pair's edges split into TP / FN / FP / TN, as a
+    percentage of that pair.
+
+    Normalised per pair on purpose. Raw counts are dominated by one pair -- hyphal-hyphal is
+    ~58% of all edges -- which buries exactly the pairs worth reading, above all
+    epithelial-hyphal, the pair the joint task is supposed to teach the model to reject. Each
+    bar's own n is annotated so the mass the normalisation hides is still on the figure.
+
+    Deliberately not a Sankey: a Sankey encodes conservation of mass, so normalising each
+    source to 100% would draw a 374-edge pair and a 5500-edge pair as equal ribbons.
+    """
+    pairs, counts = edge_outcome_by_node_pair(node_types, edge_index, edge_classes,
+                                              class_names)
+    totals = counts.sum(axis=1)
+    pct = 100.0 * counts / np.maximum(totals, 1)[:, None]
+
+    fig, ax = plt.subplots(figsize=(11, 0.62 * len(pairs) + 2.4))
+    left = np.zeros(len(pairs))
+    y = np.arange(len(pairs))
+    for j, outcome in enumerate(EDGE_OUTCOME_ORDER):
+        ax.barh(y, pct[:, j], left=left, color=EDGE_OUTCOME_COLORS[outcome],
+                edgecolor='white', linewidth=0.6, label=outcome)
+        for i, (w, l) in enumerate(zip(pct[:, j], left)):
+            if w >= 6.0:                      # below this the text collides with the edges
+                ax.text(l + w / 2, i, f'{w:.0f}', ha='center', va='center',
+                        fontsize=9, color='white', fontweight='bold')
+        left += pct[:, j]
+
+    ax.set_yticks(y)
+    ax.set_yticklabels([f'{p}\n(n={t})' for p, t in zip(pairs, totals)], fontsize=9)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel('share of that pair\'s edges (%)')
+    ax.invert_yaxis()
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.01), ncol=4, frameon=False)
+    ax.set_title(title or 'Edge outcome by predicted node-type pair', pad=34)
+    ax.spines[['top', 'right']].set_visible(False)
+    fig.tight_layout()
+    return fig
