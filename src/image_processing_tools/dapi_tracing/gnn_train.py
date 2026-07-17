@@ -19,6 +19,7 @@ import matplotlib.patches as patches
 
 from image_processing_tools.dapi_tracing.simple_gnn import Model, _node_boxes, _edge_boxes
 from image_processing_tools.dapi_tracing.gnn_data import create_data_loader
+from image_processing_tools.dapi_tracing.summarize_cv_logs import summarize_cv_logs
 from image_processing_tools.dapi_tracing.gnn_interpret import (
     collect_embeddings, classify_edges, compute_per_edge_attributions,
     plot_combined_figure, plot_pca_figure,
@@ -528,9 +529,14 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
     If train_dataset is provided, training embeddings are overlaid on the PCA
     and PLS-DA scatter plots as open dashed circles colored by true label
     (positive → TP-green, negative → TN-blue).
+
+    Returns:
+        list of (probs, true_labels) ndarray pairs, one per graph, so a caller can pool
+        them across folds -- see `_log_cv_aggregate`.
     """
+    collected = []
     if not test_dataset:
-        return
+        return collected
 
     has_pred_figs = (
         hasattr(test_dataset[0], 'image') and hasattr(test_dataset[0], 'centroids')
@@ -599,6 +605,8 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             writer.add_figure(f'Predictions/Graph_{orig_idx}', fig, 0)
             plt.close(fig)
 
+        collected.append((sym_probs, true_labels))
+
         # ── Predicted-probability violin ───────────────────────────────────
         # Grouped by the TRUE label, not by TP/TN/FP/FN: TP and FN are both label-1 edges
         # split by the threshold, so plotting them apart would show one distribution cut at
@@ -659,6 +667,60 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             except Exception:
                 pass
 
+    return collected
+
+
+def _log_cv_aggregate(log_dir, experiment, pooled_preds, mean_threshold):
+    """Write the across-fold artifacts to `<repeat>/aggregate/`.
+
+    A sibling of the fold directories, so TensorBoard lists it alongside them rather than as
+    a parent run, and `summarize_cv_logs` skips it for free (it matches fold dirs on
+    `fold_<k>`).
+
+    Two things land here:
+      - the pooled held-out probability violin. Every edge appears exactly once, scored by a
+        model that never saw its graph -- the honest CV picture, where a per-fold violin only
+        ever shows one graph.
+      - `cv_summary.csv`, the per-fold metrics table, read back out of the fold event files
+        that were just closed.
+    """
+    agg_dir = Path(log_dir) / 'aggregate'
+    agg_dir.mkdir(parents=True, exist_ok=True)
+
+    if pooled_preds:
+        try:
+            probs = np.concatenate([p for p, _ in pooled_preds])
+            labels = np.concatenate([t for _, t in pooled_preds])
+            writer = SummaryWriter(log_dir=str(agg_dir))
+            # Each fold picks its own F1-maximizing threshold, so no single cut applies to
+            # the pooled edges; the mean is drawn and labelled as such.
+            fig = plot_probability_violin(
+                probs, labels, threshold=mean_threshold,
+                title=(f'Predicted probability by true label — all {len(pooled_preds)} '
+                       f'held-out graphs pooled'),
+                threshold_label=f'mean fold threshold = {mean_threshold:.3f}',
+            )
+            writer.add_figure('CV/Probabilities_all_folds', fig, 0)
+            plt.close(fig)
+            writer.close()
+        except Exception as exc:
+            print(f"[warn] Aggregate violin failed: {exc}")
+
+    # Per-fold metrics table. summarize_cv_logs walks <root>/<repeat>/fold_<k>, so it is
+    # handed the parent of this repeat and filtered back down to it.
+    try:
+        df = summarize_cv_logs(Path(log_dir).parent)
+        if not df.empty and 'repeat' in df.columns:
+            df = df[df['repeat'] == experiment]
+        if df.empty:
+            print("[warn] No fold metrics found for cv_summary.csv")
+        else:
+            out_csv = agg_dir / 'cv_summary.csv'
+            df.to_csv(out_csv, index=False)
+            print(f"Wrote {out_csv}")
+    except Exception as exc:
+        print(f"[warn] Could not write cv_summary.csv: {exc}")
+
 
 def _apply_feature_zscore(train_dataset, test_dataset=None):
     """Z-score node features + edge intensity (col 0) using train-fold stats only."""
@@ -686,6 +748,7 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
     """
     kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
     results = []
+    pooled_preds = []
 
     print(f"Starting {num_folds}-fold cross-validation...")
 
@@ -777,10 +840,11 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
         summary_text = f"Train {train_idx.tolist()} Test {test_idx.tolist()} Best Epoch {best_epoch} Loss {final_test_loss:.4f} AUC {final_test_auc:.4f} PR_AUC {final_pr_auc:.4f} F1 {final_f1:.4f} Thresh {final_test_thresh:.4f}"
         writer.add_text('Fold Summary', summary_text, 0)
 
-        _log_figures(
+        fold_preds = _log_figures(
             model, test_dataset, test_idx, writer, final_test_thresh, device,
             train_dataset=train_dataset if log_train_embeddings else None,
         )
+        pooled_preds.extend(fold_preds)
 
         results.append({'test_loss': final_test_loss, 'test_acc': final_test_acc, 'test_auc': final_test_auc, 'best_threshold': final_test_thresh})
         writer.close()
@@ -794,6 +858,8 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
     print(f"Average Test Acc: {avg_acc:.4f}")
     print(f"Average Test AUC: {avg_auc:.4f}")
     print(f"Average Best Threshold: {avg_thresh:.4f}")
+
+    _log_cv_aggregate(log_dir, experiment, pooled_preds, avg_thresh)
 
     return results
 
