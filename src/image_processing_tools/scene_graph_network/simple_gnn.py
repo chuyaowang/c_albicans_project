@@ -384,14 +384,35 @@ class Model(torch.nn.Module):
             spatial_scale=spatial_scale,
             aligned=True,
         )
+
+        # An edge's box is the min/max union of its endpoints' bboxes, so A->B and B->A are
+        # the identical box and would crop the identical patch. The graph stores both
+        # directions, so cropping every row does half its work twice: crop once per
+        # undirected pair and scatter the result back.
+        #
+        # Not bit-identical to cropping all of them -- identical patches at different offsets
+        # in a batched conv reduce in a different order, so results drift ~3e-8. That is far
+        # below the feature scale and below anything the downstream LayerNorm'd fusion could
+        # notice; tests/scene_graph_network/test_edge_visual_dedup.py pins the tolerance.
+        u, v = edge_index[0], edge_index[1]
+        # centroids.size(0) is the batch's total node count, so node ids never collide across
+        # graphs and this key is unique per undirected pair within the batch.
+        pair_key = torch.minimum(u, v) * centroids.size(0) + torch.maximum(u, v)
+        _, inverse, = torch.unique(pair_key, return_inverse=True)[:2]
+        # One representative row per pair. Any occurrence will do -- they share a box.
+        n_pairs = int(inverse.max().item()) + 1 if inverse.numel() else 0
+        rep = torch.zeros(n_pairs, dtype=torch.long, device=inverse.device)
+        rep.scatter_(0, inverse, torch.arange(inverse.numel(), device=inverse.device))
+
         edge_patches = roi_align(
-            feat, edge_rois,
+            feat, edge_rois[rep],
             output_size=self.roi_output_size,
             spatial_scale=spatial_scale,
             aligned=True,
         )
+        edge_visual = self.edge_visual_cnn(edge_patches)[inverse]
 
-        return self.node_visual_cnn(node_patches), self.edge_visual_cnn(edge_patches)
+        return self.node_visual_cnn(node_patches), edge_visual
 
     def forward(self, data, return_attention=False, return_embeddings=False,
                 attribution_mode=False, return_node_logits=False):
