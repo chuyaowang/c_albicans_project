@@ -582,6 +582,6 @@ Leave-one-out over 6 images, **one repeat**.
 
 ### Where this leaves the approach
 
-The head is **kept**: it costs little and improves ranking on every fold. But it did not deliver the mechanism it was built for, and the overfit-vs-CV gap says why — with six images of three distinct modalities, there is not enough evidence to learn what a cell type *is* in general. See [Future Directions](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md).
+The head is **kept**: it costs little and improves ranking on every fold. But it did not deliver the mechanism it was built for, and the overfit-vs-CV gap says why — six images, no two of which are quite the same kind of picture, is not enough evidence to learn what a cell type *is* in general. See [Future Directions](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md).
 
 > **Status:** complete and not under active development. The result is real but narrow; the binding constraint is the dataset, not the architecture.
