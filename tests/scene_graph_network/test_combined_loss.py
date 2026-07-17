@@ -84,18 +84,25 @@ def test_node_loss_weight_without_node_type_raises():
         train_model(model, _untyped_loader(), opts, torch.nn.BCELoss(), node_loss_weight=1.0)
 
 
-def test_partially_typed_dataset_trains():
-    """Only a WHOLLY untyped dataset is the error. Mixing typed and untyped graphs stays
-    legal, so the head still trains on the ones that can supply a target.
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_partially_typed_dataset_raises(batch_size):
+    """Mixing typed and untyped graphs is refused up front, not tolerated per batch.
+
+    PyG collates a batch's keys off data_list[0], so at batch_size > 1 a mixed batch either
+    raises KeyError (typed graph first) or silently drops every node label and reports
+    node_loss 0.0 (untyped first) -- the exact fabricated-null-result this guard exists to
+    stop. n_fold_validation shuffles, so which one you got would be decided per epoch.
+    Parametrised over batch_size because the old whole-dataset check passed at 1 and let the
+    hazard through at 2.
     """
     model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
     typed = _graph(seed=0)
     untyped = _graph(seed=1)
     del untyped.node_type
-    loader = DataLoader([typed, untyped], batch_size=1)
+    loader = DataLoader([typed, untyped], batch_size=batch_size)
     opts = [torch.optim.AdamW(model.parameters(), lr=1e-3)]
-    out = train_model(model, loader, opts, torch.nn.BCELoss(), node_loss_weight=1.0)
-    assert out[7] > 0.0
+    with pytest.raises(ValueError, match="every graph"):
+        train_model(model, loader, opts, torch.nn.BCELoss(), node_loss_weight=1.0)
 
 
 def test_node_head_receives_gradient():

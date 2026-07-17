@@ -180,14 +180,21 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
     # node_loss at 0.0 just as silently, and the run then reproduces the edge-only baseline
     # while looking like a node-head run. Backward compatibility for the untyped datasets
     # (nuclei, and everything built before node types) is the node_loss_weight=0.0 default,
-    # which never reaches here -- not a no-op at 1.0. Partially typed datasets stay legal:
-    # only a dataset that can NEVER supply a target is the mistake.
-    if node_loss_weight > 0 and not any(
+    # which never reaches here -- not a no-op at 1.0.
+    #
+    # EVERY graph must be typed, not merely one. PyG collates a batch's keys off
+    # data_list[0], so a mixed batch either raises KeyError('node_type') (typed graph first)
+    # or silently drops every node label and reports node_loss 0.0 (untyped first) -- and
+    # n_fold_validation shuffles, so which one you got would be decided per epoch. Partial
+    # typing is therefore the same silent failure this guard exists to stop; refuse it here
+    # rather than let it surface at batch_size > 1.
+    if node_loss_weight > 0 and not all(
             getattr(d, "node_type", None) is not None for d in loader.dataset):
         raise ValueError(
-            "node_loss_weight > 0 requires graphs carrying node_type; no graph in this "
-            "dataset has one, so the node loss would silently stay 0.0. Pass "
-            "node_types_list to create_pyg_data, or leave node_loss_weight at 0.0."
+            "node_loss_weight > 0 requires every graph to carry node_type; at least one in "
+            "this dataset does not, so the node loss would silently stay 0.0 (PyG collates "
+            "a batch's keys from its first graph). Pass node_types_list to create_pyg_data "
+            "for every graph, or leave node_loss_weight at 0.0."
         )
 
     for data in loader:
