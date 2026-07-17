@@ -1034,6 +1034,8 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
             writer.add_scalar('Loss/Train_BCE', train_bce, epoch)
             writer.add_scalar('Loss/Train_DegreePenalty', train_penalty, epoch)
             writer.add_scalar('Loss/Train_BCE_Unsampled', train_bce_unsampled, epoch)
+            if node_loss_weight > 0:
+                writer.add_scalar('Loss/Node_Train', train_node_loss, epoch)
             writer.add_scalar('Diag/Pred_Mean', train_pred_mean, epoch)
             writer.add_scalar('Diag/Pred_Std', train_pred_std, epoch)
             writer.add_scalar('Accuracy/Train', train_acc, epoch)
