@@ -8,7 +8,7 @@
 
 $$\mathcal{L} = \underbrace{\text{BCE}_{\varepsilon=0.1}}_{\text{always}} \;+\; \underbrace{w_{\text{deg}} \cdot \mathcal{L}_{\text{degree}}}_{w_{\text{deg}}\,=\,0\ \text{— disabled}} \;+\; \underbrace{w_{\text{node}} \cdot \mathcal{L}_{\text{node}}}_{\text{optional; } w_{\text{node}}\,=\,1.0\ \text{when on}}$$
 
-(`gnn_train.py:289`.) In the default configuration only the first term is live, making the loss **BCE with label smoothing on sampled edges** — a pure classification objective. The degree term is **disabled** (see [§2](#2.%20Sparsity-aware%20degree%20penalty%20(disabled))), so **no structural constraint enters the loss**. The node term (§4) is an **auxiliary classification** objective, not a structural one: it constrains what the representation must encode, never which edges may exist.
+(the total-loss line in `train_model`.) In the default configuration only the first term is live, making the loss **BCE with label smoothing on sampled edges** — a pure classification objective. The degree term is **disabled** (see [§2](#2.%20Sparsity-aware%20degree%20penalty%20(disabled))), so **no structural constraint enters the loss**. The node term (§4) is an **auxiliary classification** objective, not a structural one: it constrains what the representation must encode, never which edges may exist.
 
 ### 1. BCE (classification) loss with label smoothing
 
@@ -49,9 +49,10 @@ $$\mathcal{L} = \underbrace{\text{BCE}_{\varepsilon=0.1}}_{\text{always}} \;+\; 
 
     | asked for a node loss, but… | |
     | --- | --- |
-    | the model has no `predict_node_type=True` | **raises** (`gnn_train.py:173`) |
-    | no graph in the dataset carries `node_type` | **raises** (`gnn_train.py:185`), checked before the first epoch |
-    | *some* graphs carry it | **trains** on those — a partially typed dataset is legal |
+    | the model has no `predict_node_type=True` | **raises** — `train_model`'s head guard |
+    | **any** graph in the dataset lacks `node_type` | **raises** — `train_model`'s data guard, checked before the first epoch |
+
+    **Every graph must be typed, not merely one.** PyG collates a batch's keys off `data_list[0]`, so a mixed batch either raises `KeyError('node_type')` when a typed graph sorts first, or **silently drops every node label and reports `node_loss` 0.0** when an untyped one does — and `n_fold_validation` shuffles, so which one you got would be decided per epoch. Partial typing is therefore the same silent failure the guard exists to stop, which is why it is refused up front rather than left to surface at `batch_size > 1`.
 
     **Backward compatibility is the `node_loss_weight=0.0` default.** The nuclei pipeline and every dataset built before this work have no `node_type` and run unchanged at the default, never reaching the guard. What is refused is asking for the loss at weight 1.0 against data that cannot supply a target.
 - **Experimental basis:** [GCN Model Experiments §11](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md).
@@ -107,7 +108,7 @@ Training is monitored on two surfaces: `tqdm` for live console feedback and Tens
 Both entry points track the **same metrics** but under **different tag names**, and the held-out metrics mean different things in each:
 
 - **`n_fold_validation`** evaluates on the held-out fold and suffixes its evaluation tags `/Test`.
-- **`train_overfit_test`** builds its `eval_loader` from the *same* `train_dataset` it trains on (`gnn_train.py:793`) and suffixes its tags **`/Eval`**. There is no held-out set by design — the run answers "does the model have the capacity to fit this data at all?", so every `/Eval` metric measures **fit, not generalization**.
+- **`train_overfit_test`** builds its `eval_loader` from the *same* `train_dataset` it trains on (in `train_overfit_test`) and suffixes its tags **`/Eval`**. There is no held-out set by design — the run answers "does the model have the capacity to fit this data at all?", so every `/Eval` metric measures **fit, not generalization**.
 
 | | Cross-validation | Overfit test |
 | --- | --- | --- |
@@ -119,7 +120,7 @@ Both entry points track the **same metrics** but under **different tag names**, 
 
 Two consequences worth keeping in mind when reading an overfit run:
 
-- **`AUC/Eval` is a training-set metric.** Early stopping still maximizes it (`gnn_train.py:816-823`), which for a capacity test means "stop once memorization plateaus" — it is not model selection against unseen data.
+- **`AUC/Eval` is a training-set metric.** Early stopping still maximizes it (`train_overfit_test`'s early-stopping block), which for a capacity test means "stop once memorization plateaus" — it is not model selection against unseen data.
 - **`Diag/Pred_Std_Eval` is not the saturation diagnostic.** The `_Test` version earns that role by measuring the held-out graph ([§10](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#10.%20Saturated%20probabilities%20under%20leave-one-out%20CV%20(in%20progress))); its `_Eval` counterpart cannot detect the same failure.
 
 ### Metrics and their interpretation
@@ -159,7 +160,7 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
     | Artifact | What it is |
     | --- | --- |
     | `CV/Probabilities_all_folds` | the probability violin over **every fold's held-out edges pooled**. Each edge appears exactly once, scored by a model that never trained on its graph — the honest CV picture. Folds each pick their own F1-maximizing threshold, so no single cut applies; the **mean** threshold is drawn dashed and labelled as such. |
-    | `cv_summary.csv` | the per-fold metrics table — `best_epoch, auc, f1, pr_auc, threshold, pred_mean_train, pred_std_train, pred_mean_test, pred_std_test` — written automatically at the end of every CV run. |
+    | `cv_summary.csv` | the per-fold metrics table — `best_epoch, auc, f1, pr_auc, pred_mean_train, pred_std_train, pred_mean_test, pred_std_test, threshold`, plus `node_accuracy`, `node_f1_<class>` and `node_support_<class>` when the [node head](#4.%20Node-type%20cross-entropy%20(optional)) is on — written automatically at the end of every CV run. Its columns are **derived from `EPOCH_TAGS`**, so a scalar added there reaches the table automatically; the two used to be stated separately and drifted, which is why the node metrics were logged to TensorBoard for the whole node-type experiment and never appeared here. Empty cells are real: an edge-only run has no node columns, and a fold whose held-out image lacks a class has no F1 for it. |
 
   `cv_summary.csv` is produced by handing `summarize_cv_logs` the parent of this repeat and filtering back down to it, so the table is read from the fold event files rather than recomputed — one source of truth. Running `summarize_cv_logs.py` by hand still works and additionally pivots across repeats.
 
@@ -196,7 +197,7 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
 - **Sidecar files** written next to the events file, for downstream analysis outside TensorBoard:
     - `attention_graph_<id>.csv` — one row per directed edge: `edge_idx, src, tgt, a1, a2, prob, true_label, edge_class`. Built from the same DataFrame that backs the parallel-coordinates figure, so plot and CSV cannot drift.
     - `prediction_graph_<id>.graphml` — the predicted-edge graph the merge was read from, nodes carrying `ais_label` / `cell` / centroid and edges carrying `prob` / `true_label` / `edge_class` / `a1` / `a2`. GraphML rather than a pickle so igraph / Cytoscape / Gephi can open it (and networkx dropped `write_gpickle` in 3.0).
-  - **The background is a channel stack, not one fixed modality.** `data.image` may carry DIC alongside one or more fluorescence channels, so the layout is read from the shape rather than assumed. The dispatch lives in `_imshow_microscopy` (`gnn_train.py:421-447`) and is shared by all three figure families — edge predictions, the merge 2×2, and the node-type 2×2 — so they cannot render the same graph differently:
+  - **The background is a channel stack, not one fixed modality.** `data.image` may carry DIC alongside one or more fluorescence channels, so the layout is read from the shape rather than assumed. The dispatch lives in `_imshow_microscopy` (`_imshow_microscopy`) and is shared by all three figure families — edge predictions, the merge 2×2, and the node-type 2×2 — so they cannot render the same graph differently:
 
     | `data.image` shape | Rendered as |
     | --- | --- |
@@ -204,11 +205,11 @@ Tags below are given as *CV* / *overfit* where the two differ. Training-side tag
     | `(H, W, 2)` | composite — channel 0 (DAPI) in blue over channel 1 (DIC) in grayscale, so both are visible at once |
     | `(H, W, 3+)` | RGB from the first three channels, **each percentile-stretched independently** |
 
-    **Why multi-channel layouts must be stretched: they bypass the colormap.** Grayscale goes through a colormap, which autoscales to the data's own range, so a raw 16-bit channel renders correctly. RGB does not — `imshow` accepts RGB only as `uint8` or float in `[0, 1]` and **silently clips** anything else (it emits `Clipping input data to the valid range for imshow with RGB data`, which is easy to miss in a training log). A 16-bit stack handed over raw therefore rendered **almost entirely white**. `_stretch_channel` (`gnn_train.py:408`) maps each channel's 1st–99th percentile to `[0, 1]` first.
+    **Why multi-channel layouts must be stretched: they bypass the colormap.** Grayscale goes through a colormap, which autoscales to the data's own range, so a raw 16-bit channel renders correctly. RGB does not — `imshow` accepts RGB only as `uint8` or float in `[0, 1]` and **silently clips** anything else (it emits `Clipping input data to the valid range for imshow with RGB data`, which is easy to miss in a training log). A 16-bit stack handed over raw therefore rendered **almost entirely white**. `_stretch_channel` (`_stretch_channel`) maps each channel's 1st–99th percentile to `[0, 1]` first.
 
     **Per channel, not jointly.** Channels differ in absolute intensity by large factors, so a joint stretch lets the brightest channel dominate and washes the others out. Stretching each independently keeps a dim fluorescence channel visible next to a bright DIC one.
 
     ⚠️ **This was a display bug only.** It affected the logged figures and nothing else: the features are read from the separately-built summed intensity image, never from `data.image`. No metric, feature or trained model was affected, and no run needed re-running for it.
 
     Nuclei-era graphs are typically single-channel DAPI; fragment graphs typically carry DIC plus fluorescence.
-- **Training-embedding overlay — CV only.** The `Interpretation/Graph_<id>` PCA / PLS-DA scatter plots can overlay the *training* fold's embeddings as open dashed circles colored by true label (see [GCN Model Interpretation](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Interpretation.md)). `n_fold_validation` passes the training fold in when `log_train_embeddings=True` (default, `gnn_train.py:753`); `train_overfit_test` passes `train_dataset=None` (`gnn_train.py:865`) **by design** — its training set *is* its eval set, so the overlay would just redraw the same points.
+- **Training-embedding overlay — CV only.** The `Interpretation/Graph_<id>` PCA / PLS-DA scatter plots can overlay the *training* fold's embeddings as open dashed circles colored by true label (see [GCN Model Interpretation](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Interpretation.md)). `n_fold_validation` passes the training fold in when `log_train_embeddings=True` (the default); `train_overfit_test` passes `train_dataset=None` **by design** — its training set *is* its eval set, so the overlay would just redraw the same points.

@@ -161,7 +161,7 @@ The pooled version concatenates every fold's held-out predictions, so each edge 
 
 ## Node-type figures
 
-Two figures, logged only when the [node head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)) is on and the graph carries `data.node_type`. Both use one palette — **red = background, blue = epithelial, orange = hyphal** (`NODE_TYPE_COLORS`, `gnn_train.py:496`) — matching the notebook 11 label figures, so exploration and training figures are read with the same eyes.
+Two figures, logged only when the [node head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)) is on and the graph carries `data.node_type`. Both use one palette — **red = background, blue = epithelial, orange = hyphal** (`NODE_TYPE_COLORS` in `gnn_train.py`) — matching the notebook 11 label figures, so exploration and training figures are read with the same eyes.
 
 ### Node-type comparison (2×2)
 

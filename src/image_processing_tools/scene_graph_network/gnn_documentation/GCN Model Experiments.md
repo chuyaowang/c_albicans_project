@@ -200,7 +200,7 @@ Train on 6-node graphs ($w^{+} = 2$, false negatives penalized heavily) and test
 
 **Why negative sampling is different in kind.** It does not try to *correct* a skewed ratio with a coefficient; it **fixes the ratio to a constant** for every graph in every batch. No fold-dependent prior is left to transfer. That is the distinction: $w^{+}$ relocated the problem, sampling removed it.
 
-📄 **No implementation survives.** Every loss construction in the project is a bare `torch.nn.BCELoss()` (`gnn_train.py:692`, `:802`). The weighted variant was removed without leaving code, and this directory is not under version control, so the definition above is reconstructed from the prose records in this section and in `dapi_tracing/CLAUDE.md` §5.3 — not read off an implementation. The mechanism is also unrecoverable: the model emits probabilities via `torch.sigmoid` (`simple_gnn.py:129`) into `BCELoss`, which has no `pos_weight` argument, so this was either a per-element `BCELoss(weight=…)` mask tensor or a swap to `BCEWithLogitsLoss` with the sigmoid removed.
+📄 **No implementation survives.** Every loss construction in the project is a bare `torch.nn.BCELoss()` (constructed in `n_fold_validation` and `train_overfit_test`). The weighted variant was removed without leaving code, and this directory is not under version control, so the definition above is reconstructed from the prose records in this section and in `dapi_tracing/CLAUDE.md` §5.3 — not read off an implementation. The mechanism is also unrecoverable: the model emits probabilities via `torch.sigmoid` (`simple_gnn.py:129`) into `BCELoss`, which has no `pos_weight` argument, so this was either a per-element `BCELoss(weight=…)` mask tensor or a swap to `BCEWithLogitsLoss` with the sigmoid removed.
 
 ## 9. Visual features
 
@@ -559,7 +559,7 @@ Leave-one-out over 6 images, **one repeat**.
 | 6 (img 3) | 0.7343 | **0.7826** | −0.048 | 0.4444 | 0.5135 | 0.8339 | 20 / 25 / 162 |
 | **mean** | **0.7503** | | | **0.4129** (6/6) | **0.6211** (4/6) | **0.8044** (6/6) | |
 
-*Source: `NodeType/*_Test` at `best_epoch` in each `fold_*/events*`; majority baseline computed from notebook 11 cell 15.*
+*Source: `nodetype_cv_k10_minFrac0_1_visual/aggregate/cv_summary.csv` (`node_accuracy`, `node_f1_<class>`, `node_support_<class>`); majority baseline computed from notebook 11 cell 15. Folds 1 and 2 carry empty epithelial cells rather than zeros — images 0 and 1 have no epithelial nodes, and absence is not a score.*
 
 **Accuracy is the wrong lens, and it is worth saying why.** The majority baseline — always predict the image's commonest class — beats the head on 4/6 folds. But that baseline scores 0.9291 on image 0 while having **F1 = 0 for background**: it never finds a single background fragment, which is precisely the failure this head was built to fix. The head trades majority-class accuracy for the ability to find minority classes at all. **That is the right trade; the problem is how little it buys.**
 

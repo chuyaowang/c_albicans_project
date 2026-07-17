@@ -294,10 +294,11 @@ the node head         (see GCN Design Choices)
 >
 > | asked for a node loss, but… | result |
 > | --- | --- |
-> | the model has no head | raises (`gnn_train.py:173`) |
-> | no graph carries `node_type` | raises (`gnn_train.py:185`) |
-> | *some* graphs carry it | trains on those — legal, so nuclei and fragment graphs can mix |
+> | the model has no head | raises — `train_model`'s head guard |
+> | **any** graph lacks `node_type` | raises — `train_model`'s data guard |
 >
-> **Backward compatibility is the `node_loss_weight=0.0` default, not a silent no-op at 1.0.** The nuclei pipeline and every dataset built before this work have no `node_type`; they run unchanged at the default weight and never reach the guard. `evaluate_node_types` skips them by design (`gnn_train.py:388`).
+> **Every graph must be typed, not merely one.** PyG collates a batch's keys off `data_list[0]`, so a mixed dataset either raises `KeyError('node_type')` or **silently drops every node label and reports `node_loss` 0.0**, depending on which graph happens to sort first — and `n_fold_validation` shuffles, so that would be decided per epoch. Mixing typed and untyped graphs is therefore refused rather than tolerated.
+>
+> **Backward compatibility is the `node_loss_weight=0.0` default, not a silent no-op at 1.0.** The nuclei pipeline and every dataset built before this work have no `node_type`; they run unchanged at the default weight and never reach the guard. `evaluate_node_types` skips them by design.
 
 See [Cell Mask Graph Data Flow](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md) and [GCN Design Choices](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md).
