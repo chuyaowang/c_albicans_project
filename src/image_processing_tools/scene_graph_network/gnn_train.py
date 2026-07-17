@@ -30,6 +30,7 @@ from image_processing_tools.scene_graph_network.cell_merge_inference import (
     merge_fragments, summarize_cells,
 )
 from image_processing_tools.scene_graph_network.summarize_cv_logs import summarize_cv_logs
+from image_processing_tools.scene_graph_network.node_sampling import sample_balanced_nodes
 
 
 def enforce_symmetric_predictions(pred, edge_index, num_nodes):
@@ -127,7 +128,9 @@ def get_muon_optimizers(model, learning_rate, adam_lr_factor=1.0, muon_weight_de
     return [opt_muon, opt_adam]
 
 
-def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0, neg_sample_ratio=1.0, label_smoothing=0.0):
+def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
+                neg_sample_ratio=1.0, label_smoothing=0.0,
+                node_loss_weight=0.0, node_sample_ratio=1.0):
     """
     Performs one epoch of training for an edge classification task.
 
@@ -138,6 +141,11 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
         criterion (callable): The loss function.
         degree_penalty_weight (float): The weight for the degree constraint penalty.
         neg_sample_ratio (float): Ratio of negative to positive edges to sample per batch.
+        node_loss_weight (float): weight on the node-type cross-entropy in the combined
+            loss. 0.0 (default) disables the node head entirely, leaving every existing
+            caller unchanged.
+        node_sample_ratio (float): passed to `sample_balanced_nodes`; how many nodes to take
+            per present class, as a multiple of the rarest present class.
 
     Returns:
         tuple: The average loss and accuracy over the training dataset.
@@ -151,6 +159,8 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
     total_unsampled_bce = 0
     total_pred_mean = 0
     total_pred_std = 0
+    total_node_loss = 0
+    node_criterion = torch.nn.CrossEntropyLoss()
 
     device = next(model.parameters()).device
 
@@ -162,7 +172,12 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
             opt.zero_grad()
 
         # 1. Get predictions for all edges in the batch. The model's forward pass handles this.
-        pred = model(data)
+        # Node logits only when the head is on AND weighted in; otherwise the old path.
+        want_nodes = node_loss_weight > 0 and getattr(model, "predict_node_type", False)
+        if want_nodes:
+            pred, node_logits = model(data, return_node_logits=True)
+        else:
+            pred, node_logits = model(data), None
 
         # Enforce perfectly symmetric predictions
         pred = enforce_symmetric_predictions(pred, data.edge_index, data.num_nodes)
@@ -200,6 +215,16 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
         if label_smoothing > 0:
             sampled_targets = sampled_targets * (1 - label_smoothing) + (1 - sampled_targets) * label_smoothing
         bce_loss = criterion(pred[loss_indices], sampled_targets)
+
+        # --- Node type loss ---
+        # Balanced subsample per batch, mirroring the negative sampling above: the model
+        # must not learn a prior on the class distribution, because the per-image ratios
+        # swing far too much for a training-set prior to transfer to the held-out fold.
+        node_loss = 0.0
+        node_type = getattr(data, "node_type", None)
+        if want_nodes and node_type is not None and node_type.numel() > 0:
+            sel = sample_balanced_nodes(node_type, ratio=node_sample_ratio)
+            node_loss = node_criterion(node_logits[sel], node_type[sel])
 
         # --- Degree Constraint Penalty ---
         penalty_loss = 0.0
@@ -249,7 +274,7 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
                 penalty_loss = torch.mean(torch.stack(node_violations))
 
         # Total loss is the sum of classification loss and the degree penalty
-        loss = bce_loss + degree_penalty_weight * penalty_loss
+        loss = bce_loss + degree_penalty_weight * penalty_loss + node_loss_weight * node_loss
         loss.backward()
         for opt in optimizers:
             opt.step()
@@ -262,6 +287,8 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
         total_bce_loss += bce_loss.item() * data.num_graphs
         penalty_val = penalty_loss.item() if isinstance(penalty_loss, torch.Tensor) else penalty_loss
         total_penalty_loss += penalty_val * data.num_graphs
+        node_val = node_loss.item() if isinstance(node_loss, torch.Tensor) else node_loss
+        total_node_loss += node_val * data.num_graphs
 
         with torch.no_grad():
             unsampled_bce = criterion(pred, ground_truth).item()
@@ -274,6 +301,7 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
         total_loss / n, total_correct / total_samples,
         total_bce_loss / n, total_penalty_loss / n,
         total_unsampled_bce / n, total_pred_mean / n, total_pred_std / n,
+        total_node_loss / n,
     )
 
 
@@ -947,7 +975,8 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
 
         epoch_pbar = tqdm(range(1, max_epochs + 1), desc=f"Training Fold {fold+1}/{num_folds}")
         for epoch in epoch_pbar:
-            train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled, train_pred_mean, train_pred_std = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
+            (train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled,
+             train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
             test_loss, test_acc, test_auc, test_pr_auc, test_f1, _, test_pred_mean, test_pred_std = test_model(model, test_loader, criterion)
 
             if epoch >= min_epoch:
@@ -1061,7 +1090,8 @@ def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_par
 
     epoch_pbar = tqdm(range(1, max_epochs + 1), desc="Training Overfit Model")
     for epoch in epoch_pbar:
-        train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled, train_pred_mean, train_pred_std = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
+        (train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled,
+         train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
         test_loss, test_acc, test_auc, test_pr_auc, test_f1, _, test_pred_mean, test_pred_std = test_model(model, eval_loader, criterion)
 
         if epoch >= min_epoch:
