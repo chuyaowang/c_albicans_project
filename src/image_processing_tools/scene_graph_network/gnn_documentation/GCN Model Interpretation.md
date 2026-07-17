@@ -159,6 +159,28 @@ Built with matplotlib's `ax.violinplot` (seaborn is not a dependency). A single-
 
 The pooled version concatenates every fold's held-out predictions, so each edge appears exactly once, scored by a model that never saw its graph. Because each fold chose its own threshold, the pooled figure draws the **mean** threshold and says so in the legend — there is no single cut that applies to all of them. The per-fold violins are kept precisely because the pooled one hides which fold contributed what, which is the failure §10 is about.
 
+## Node-type figures
+
+Two figures, logged only when the [node head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)) is on and the graph carries `data.node_type`. Both use one palette — **red = background, blue = epithelial, orange = hyphal** (`NODE_TYPE_COLORS`, `gnn_train.py:496`) — matching the notebook 11 label figures, so exploration and training figures are read with the same eyes.
+
+### Node-type comparison (2×2)
+
+`plot_node_type_comparison` — source image, AIS fragments, **ground-truth** types, **predicted** types.
+
+- **GT and prediction sit diagonally opposite**, so a misclassified fragment reads as a **colour flip in the same place**. The eye compares position, not legend.
+- **Deliberately mirrors `plot_merge_comparison`'s layout** — the two figures are meant to be opened side by side, and a shared layout makes "this fragment is mistyped *and* mis-merged" visible at a glance.
+- Panel titles carry the class counts and the accuracy, so a figure is interpretable without the scalars.
+
+### Edge outcome by node pair
+
+`edge_outcome_by_node_pair` / `plot_edge_outcome_by_node_pair` (`gnn_interpret.py:971`) — each edge's TP / FN / FP / TN outcome, grouped by **the pair of node types it connects** (`bg-bg`, `bg-epi`, …).
+
+**This is the figure that tests the hypothesis.** The whole argument for the node head is that a true edge cannot span background↔cell or epithelial↔hyphal, and that the model would learn this implicitly. This figure asks it directly: *do the model's edge mistakes line up with the node types it believes in?*
+
+- **It groups by the model's own predicted types, not ground truth** — deliberately. The question is whether the model's type beliefs and its edge beliefs are consistent *with each other*; ground-truth grouping would answer a different question.
+- **`EDGE_OUTCOME_ORDER = ['TP', 'FN', 'FP', 'TN']`** puts the two error classes **adjacent, in the middle**, so the error mass is one contiguous block rather than split across the ends.
+- **Only pairs that actually occur are plotted.** A pair with no edges would render as an empty bar and invite reading it as a score of zero.
+
 ## TensorBoard log paths
 
 Rendered once per graph at `global_step=0`, after the best-AUC snapshot is restored:
@@ -170,6 +192,8 @@ Rendered once per graph at `global_step=0`, after the best-AUC snapshot is resto
 | Attention parallel coordinates | `Attention/Graph_<id>` |
 | Predicted-probability violin | `Probabilities/Graph_<id>` |
 | Predicted-probability violin, folds pooled | `CV/Probabilities_all_folds` (in `<repeat>/aggregate/`) |
+| Node-type comparison 2×2 | `NodeType/Graph_<id>` — node-head runs only |
+| Edge outcome by node pair | `NodeType/Graph_<id>_edge_outcomes` — node-head runs only |
 
 `<id>` is the original dataset index of the test graph (same identifier used in `Predictions/Graph_<id>` and `Merge/Graph_<id>`), so the prediction overlay, the merge and the interpretation figure can be opened side by side in TensorBoard.
 

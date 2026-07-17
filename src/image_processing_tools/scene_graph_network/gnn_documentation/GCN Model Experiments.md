@@ -446,3 +446,132 @@ Two experiments were run:
 3. **Optional preflight:** log the held-out graph's post-z-score feature mean/std per fold to confirm the feature-distribution contribution is negligible.
 
 > **Status:** all normalization and calibration fixes in place and confirmed. Genuine prediction collapses eliminated. Remaining difficulty on fold 4 is a data-level generalization problem, not a model implementation artifact.
+
+---
+
+## 11. Node type classification
+
+> **Verdict up front.** The node head **improves edge ranking on every fold** (AUC 0.8445 → 0.8807, better on 6/6) while **failing at its own task** (node accuracy 0.7503, below the per-image majority baseline on 4/6 folds) and **not fixing the failure that motivated it** (background F1 0.41). It earns its place as an **auxiliary task that regularises the shared representation**, not as a working node classifier. The gain is in *ranking*, not in *decisions*: PR-AUC and edge accuracy are flat.
+
+### Why it was tried
+
+Two failure modes in the merge predictions, both statements about nodes rather than edges:
+
+1. **AIS calls background regions cells.** Those fragments become nodes, get candidate edges, and get merged into cells that do not exist.
+2. **Candidate edges span epithelial and hyphal masks.** Those can never be a true merge — they are different cells, and different kinds of cell.
+
+Both imply a constraint on edges: **a true edge cannot span background↔cell or epithelial↔hyphal**. The graph already contains the counterexamples — 1134 cell↔background and 1078 epithelial↔hyphal directed negatives (see [Node Type Label Construction](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Node%20Type%20Label%20Construction.md#5.%20Edge%20labels%20from%20the%20same%20split)) — so the evidence to learn from was already present and unused.
+
+**The hypothesis:** predicting node type from the node embeddings, with a combined loss over a shared trunk, forces the representation to encode *what a node is* in order to score its edges — so the constraints are learned **implicitly**. Nothing is fed in explicitly; the type is what is being predicted, so it cannot be an input. Design: [Node Classifier Head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional)). Labels: [Node Type Label Construction](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Node%20Type%20Label%20Construction.md).
+
+### Protocol — a matched pair
+
+The two runs differ **only** by the node head. Same `k=10`, same `min_overlap_frac=0.1`, same visual branch, same hyperparameters, same folds, same seed.
+
+| | Baseline (edge-only) | Node head |
+| --- | --- | --- |
+| Notebook | `10_Merge Oversegmentation GNN.ipynb` | `12_Node Type GNN.ipynb` |
+| `predict_node_type` | `False` | **`True`** |
+| `node_loss_weight` | — | **1.0** (untuned — never swept) |
+| `node_sample_ratio` | — | 1.0 (equal counts per present class) |
+| `use_visual_features` | `True` | `True` |
+| Run | `cv_experiment/merge/merge_cv_k10_minFrac0_1/` | `cv_experiment/nodetype/nodetype_cv_k10_minFrac0_1_visual/` |
+
+Notebook 10 was **re-run** at `k=10` / `min_frac=0.1` for this comparison — its earlier `merge_cv` results used different values and are not a valid baseline.
+
+**Fold → test image.** Folds are `KFold(shuffle=True, random_state=42)`, so fold *k* is **not** image *k*. Recovered from each fold's node-type support counts against the per-image label distribution — the match is unique:
+
+| fold | 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **test image** | 0 | 1 | **5** | 2 | 4 | 3 |
+
+*Source: `NodeType/Support_<class>_Test` in each `fold_*/events*`, matched against notebook 11 cell 15.*
+
+### Overfit sanity check — the head works
+
+Both configurations overfit a single graph (image 3) to near-perfection:
+
+| | Edge AUC/Eval | Node accuracy | best epoch |
+| --- | --- | --- | --- |
+| Baseline | 1.0000 | — | 316 |
+| Node head | 0.9999 | **0.9952** (F1 bg 0.976 / epi 1.000 / hyph 0.997) | 106 |
+
+*Source: `overfit_experiment/{merge/merge_overfit_one_graph_k10_minFrac0_1, nodetype/nodetype_overfit_one_graph_k10_minFrac0_1_visual}/**/events*`.*
+
+**This is the most important number in the section.** The head reaches **0.9952** node accuracy on a graph it trained on, and **0.7503** on graphs it did not. The task is learnable and the capacity is there; what fails is **generalisation across images**.
+
+> The node-head run also reached its best epoch sooner here (106 vs 316), but **this does not replicate** — across the six CV folds mean `best_epoch` is 93.3 (baseline) vs 92.5 (node head), i.e. identical. The overfit difference is one run against one run and should not be read as faster convergence.
+
+### Cross-validation results
+
+Leave-one-out over 6 images, **one repeat**.
+
+**Edge AUC — improves on every fold:**
+
+| fold (img) | baseline | node head | Δ |
+| --- | --- | --- | --- |
+| 1 (img 0) | 0.8561 | 0.8793 | **+0.0232** |
+| 2 (img 1) | 0.8328 | 0.8612 | **+0.0283** |
+| 3 (img 5) | 0.8646 | 0.8995 | **+0.0349** |
+| 4 (img 2) | 0.9006 | 0.9428 | **+0.0422** |
+| 5 (img 4) | 0.7966 | 0.8437 | **+0.0471** |
+| 6 (img 3) | 0.8162 | 0.8576 | **+0.0414** |
+| **mean** | **0.8445** | **0.8807** | **+0.0362 — better on 6/6** |
+
+**Every other headline metric — flat:**
+
+| metric | baseline | node head | Δ | folds improved |
+| --- | --- | --- | --- | --- |
+| AUC | 0.8445 | 0.8807 | **+0.0362** | **6/6** |
+| F1 | 0.4862 | 0.5160 | +0.0298 | 6/6 — *but see below* |
+| PR-AUC | 0.4030 | 0.4070 | **+0.0040** | **3/6** |
+| Edge accuracy | 0.8792 | 0.8767 | **−0.0025** | **3/6** |
+
+*Source: `aggregate/cv_summary.csv` of both runs for AUC / F1 / PR-AUC; `Accuracy/Test` at each fold's `EarlyStopping/Best_Epoch` for accuracy.*
+
+#### Reading this honestly
+
+**The gain is in ranking, not in decisions.** AUC asks "are positives ranked above negatives?" and improves uniformly. PR-AUC asks the same question in a way that is sensitive to the 10% positive rate — and does **not move** (+0.004, worse on folds 1 and 4 by −0.060 and −0.056). Edge accuracy at the chosen threshold is likewise flat. A better ranking that does not produce better decisions is a real but limited result.
+
+**Do not read F1's 6/6 as confirmation.** The decision threshold is chosen per fold to **maximise F1 on the best-AUC epoch** ([Decision threshold](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Training%20Choices.md#Decision%20threshold)), and under leave-one-out the validation graph **is** the held-out graph. So F1 is measured at a threshold fitted on the very graph it scores — it reports the *best achievable* operating point, not an achievable one. PR-AUC is the threshold-free version of the same precision/recall question, and it is flat. **The gap between F1 (+0.030, 6/6) and PR-AUC (+0.004, 3/6) is the fitted threshold, not the model.** Two folds' F1 gains are noise anyway (+0.0007, +0.0001).
+
+**6/6 on AUC is still meaningful.** If the head had no effect and each fold were a coin flip, 6/6 in one direction has probability `2⁻⁶ ≈ 0.016`. But the folds share five-sixths of their training data, so they are **not independent** and that figure is optimistic. With **one repeat**, seed variance is unmeasured and cannot be separated from the effect.
+
+### Node-type results — the head does not do its own job
+
+| fold (img) | accuracy | majority baseline | Δ | F1 bg | F1 epi | F1 hyph | support (bg/epi/hyph) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 (img 0) | 0.9149 | **0.9291** | −0.014 | 0.6667 | — | 0.9572 | 10 / 0 / 131 |
+| 2 (img 1) | 0.9108 | **0.9745** | −0.064 | 0.3077 | — | 0.9527 | 4 / 0 / 153 |
+| 3 (img 5) | **0.5846** | 0.3538 | **+0.231** | 0.3333 | 0.5641 | 0.7213 | 21 / 21 / 23 |
+| 4 (img 2) | **0.6949** | 0.4068 | **+0.288** | 0.6111 | 0.8511 | 0.5714 | 21 / 24 / 14 |
+| 5 (img 4) | 0.6620 | **0.7254** | −0.063 | 0.1143 | 0.5556 | 0.7897 | 8 / 31 / 103 |
+| 6 (img 3) | 0.7343 | **0.7826** | −0.048 | 0.4444 | 0.5135 | 0.8339 | 20 / 25 / 162 |
+| **mean** | **0.7503** | | | **0.4129** (6/6) | **0.6211** (4/6) | **0.8044** (6/6) | |
+
+*Source: `NodeType/*_Test` at `best_epoch` in each `fold_*/events*`; majority baseline computed from notebook 11 cell 15.*
+
+**Accuracy is the wrong lens, and it is worth saying why.** The majority baseline — always predict the image's commonest class — beats the head on 4/6 folds. But that baseline scores 0.9291 on image 0 while having **F1 = 0 for background**: it never finds a single background fragment, which is precisely the failure this head was built to fix. The head trades majority-class accuracy for the ability to find minority classes at all. **That is the right trade; the problem is how little it buys.**
+
+- **Background F1 = 0.41.** The originally-described failure — AIS calling background cells — is **not fixed**. Per-fold it ranges 0.11–0.67 with supports of only 4–21 nodes.
+- **The head only beats majority where the classes are balanced** — images 5 (21/21/23) and 2 (21/24/14). On the hyphal-dominated images it does not.
+- **Epithelial is reported on 4/6 folds only.** Images 0 and 1 have no epithelial nodes, so those folds have no epithelial support. Absence of the metric is a property of the fold.
+
+### What did not work
+
+- **Fixing the background failure.** F1 0.41 at 10.9% prevalence. The head flags *some* background but not reliably enough to act on.
+- **Improving decisions.** PR-AUC +0.004 and edge accuracy −0.003. Whatever the head adds to the representation shows up in ordering, not in the operating point.
+- **Generalising the node task.** 0.9952 overfitting one graph versus 0.7503 across graphs is the whole story: **not capacity, not the loss, not the labels — data.**
+
+### Caveats
+
+1. **n = 6 images, one repeat.** No seed-variance estimate; the folds are not independent.
+2. **`node_loss_weight = 1.0` is untuned.** Set as the neutral default, never swept. The result is the gain at an arbitrary weight.
+3. **The node labels use a per-image threshold.** The epithelial/hyphal boundary is set per image because magnification differs (`mean_width` medians 17.5 px to 179.9 px across images). The head therefore learns from a target whose definition is not globally consistent — deliberate, but it caps what "generalise" can mean here.
+4. **`mean_width` is scale-dependent**, so the labels themselves would not transfer to a new magnification without a new threshold.
+
+### Where this leaves the approach
+
+The head is **kept**: it costs little and improves ranking on every fold. But it did not deliver the mechanism it was built for, and the overfit-vs-CV gap says why — with six images of three distinct modalities, there is not enough evidence to learn what a cell type *is* in general. See [Future Directions](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md).
+
+> **Status:** complete and not under active development. The result is real but narrow; the binding constraint is the dataset, not the architecture.
