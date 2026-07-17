@@ -677,3 +677,163 @@ def plot_attribution_heatmap(attr_matrix, probs, edge_classes, feature_names, gr
                        attr_norm, probs_s, classes_s,
                        feat_names, feat_colors, vmax)
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Ported verbatim from scene_graph_network/gnn_interpret.py. Both pipelines log the same
+# two diagnostics and they must stay identical; these depend only on _CLASS_COLORS, which
+# is defined above, and on the (a1, a2) attention pair every model here returns.
+# ---------------------------------------------------------------------------
+
+def attention_dataframe(attentions, probs, true_labels, edge_classes, edge_index):
+    """Tabulate the per-edge attention weights, for the parallel-coordinates plot.
+
+    The same frame backs the logged figure and the exported CSV, so the two cannot
+    drift apart.
+
+    Args:
+        attentions:   (a1, a2) tuple of (E,) symmetrized attention arrays.
+        probs:        (E,) symmetrized predicted probabilities.
+        true_labels:  (E,) ground-truth edge labels.
+        edge_classes: (E,) 'TP'/'TN'/'FP'/'FN' strings.
+        edge_index:   (2, E) directed edge index.
+
+    Returns:
+        pandas DataFrame, one row per directed edge.
+    """
+    import pandas as pd
+    a1, a2 = attentions
+    return pd.DataFrame({
+        'edge_idx': np.arange(len(a1), dtype=int),
+        'src': np.asarray(edge_index[0], dtype=int),
+        'tgt': np.asarray(edge_index[1], dtype=int),
+        'a1': np.asarray(a1, dtype=float),
+        'a2': np.asarray(a2, dtype=float),
+        'prob': np.asarray(probs, dtype=float),
+        'true_label': np.asarray(true_labels, dtype=float),
+        'edge_class': np.asarray(edge_classes, dtype=str),
+    })
+
+def plot_attention_parallel_coords(attn_df):
+    """Parallel-coordinates plot of each edge's two attention weights.
+
+    Two vertical axes (layer-1 and layer-2 attention); every edge is a marker on
+    each axis joined by a line, colored by TP / TN / FP / FN.
+
+    Classes are drawn worst-populated-last so the rare, interesting ones land on
+    top: negatives dominate the candidate graph and would otherwise bury them.
+
+    Args:
+        attn_df: DataFrame from `attention_dataframe`.
+
+    Returns:
+        matplotlib Figure.
+    """
+    from pandas.plotting import parallel_coordinates
+
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    # TN first and faint (it is the bulk), then the classes worth seeing.
+    for cls in ['TN', 'FN', 'FP', 'TP']:
+        sub = attn_df[attn_df['edge_class'] == cls]
+        if sub.empty:
+            continue
+        parallel_coordinates(
+            sub[['a1', 'a2', 'edge_class']], 'edge_class', cols=['a1', 'a2'], ax=ax,
+            color=[_CLASS_COLORS[cls]], marker='o', markersize=2.5,
+            alpha=0.12 if cls == 'TN' else 0.55, lw=0.7,
+        )
+
+    # parallel_coordinates adds one legend entry per call; keep one per class.
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys(), fontsize=8, title='Edge class',
+              title_fontsize=8)
+
+    ax.set_xticklabels(['Attention — layer 1', 'Attention — layer 2'], fontsize=9)
+    ax.set_ylabel('Symmetrized attention weight', fontsize=9)
+    ax.set_title(f'Per-edge attention across GCN layers ({len(attn_df)} directed edges)',
+                 fontsize=10)
+    ax.grid(axis='y', alpha=0.2)
+    fig.tight_layout()
+    return fig
+
+def plot_probability_violin(probs, true_labels, threshold=None, title=None,
+                            threshold_label=None):
+    """Violin plot of predicted probability, split by ground-truth label.
+
+    Grouped by what each edge *is* (label 1 vs 0), not by TP/TN/FP/FN: TP and FN
+    are both label-1 edges separated by the threshold, so plotting them apart
+    would show one distribution sliced at the cut rather than anything about the
+    model. Drawing the threshold across the two true-label violins shows both
+    things that matter -- how far apart the classes sit, and where the cut lands.
+
+    Saturation is visible directly here: collapsed predictions render as flat
+    lines instead of distributions (see the Diag/Pred_Std_Test diagnostic).
+
+    Args:
+        probs:           (E,) symmetrized predicted probabilities.
+        true_labels:     (E,) ground-truth edge labels (0 or 1).
+        threshold:       decision threshold to draw, or None.
+        title:           figure title.
+        threshold_label: legend text for the threshold line; defaults to naming
+                         the value.
+
+    Returns:
+        matplotlib Figure.
+    """
+    probs = np.asarray(probs, dtype=float)
+    labels = np.asarray(true_labels).astype(int)
+
+    groups, names, colors = [], [], []
+    for value, name, color in [(1, 'true edges', _CLASS_COLORS['TP']),
+                               (0, 'false edges', _CLASS_COLORS['TN'])]:
+        sel = probs[labels == value]
+        if len(sel):
+            groups.append(sel)
+            names.append(f'{name}\n(n={len(sel)})')
+            colors.append(color)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    if not groups:
+        ax.text(0.5, 0.5, 'no edges', ha='center', va='center', color='gray')
+        return fig
+
+    positions = list(range(1, len(groups) + 1))
+    # A single-valued group has zero variance and gaussian_kde raises on it; the
+    # scatter below still shows where the mass is.
+    try:
+        parts = ax.violinplot(groups, positions=positions, showextrema=False,
+                              showmedians=True, widths=0.7)
+        for body, color in zip(parts['bodies'], colors):
+            body.set_facecolor(color)
+            body.set_alpha(0.45)
+        if 'cmedians' in parts:
+            parts['cmedians'].set_color('black')
+            parts['cmedians'].set_linewidth(1.2)
+    except Exception:
+        pass
+
+    rng = np.random.default_rng(0)
+    for pos, group, color in zip(positions, groups, colors):
+        jitter = rng.uniform(-0.06, 0.06, size=len(group))
+        ax.scatter(np.full(len(group), pos) + jitter, group, s=5, color=color,
+                   alpha=0.35, edgecolors='none', zorder=3)
+
+    if threshold is not None:
+        label = threshold_label or f'threshold = {threshold:.3f}'
+        ax.axhline(threshold, color='black', linestyle='--', linewidth=1.1,
+                   alpha=0.8, label=label)
+        ax.legend(fontsize=8, loc='center right')
+
+    for pos, group in zip(positions, groups):
+        ax.text(pos, 1.04, f'μ={group.mean():.2f}\nσ={group.std():.2f}',
+                ha='center', va='bottom', fontsize=8)
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(names, fontsize=9)
+    ax.set_ylabel('Predicted probability', fontsize=9)
+    ax.set_ylim(-0.05, 1.15)
+    ax.set_title(title or 'Predicted probability by true label', fontsize=10)
+    ax.grid(axis='y', alpha=0.2)
+    fig.tight_layout()
+    return fig

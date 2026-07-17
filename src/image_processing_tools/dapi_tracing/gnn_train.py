@@ -1,4 +1,5 @@
 import copy
+from pathlib import Path
 from datetime import datetime
 
 import numpy as np
@@ -21,6 +22,7 @@ from image_processing_tools.dapi_tracing.gnn_data import create_data_loader
 from image_processing_tools.dapi_tracing.gnn_interpret import (
     collect_embeddings, classify_edges, compute_per_edge_attributions,
     plot_combined_figure, plot_pca_figure,
+    attention_dataframe, plot_attention_parallel_coords, plot_probability_violin,
 )
 
 
@@ -596,6 +598,39 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             )
             writer.add_figure(f'Predictions/Graph_{orig_idx}', fig, 0)
             plt.close(fig)
+
+        # ── Predicted-probability violin ───────────────────────────────────
+        # Grouped by the TRUE label, not by TP/TN/FP/FN: TP and FN are both label-1 edges
+        # split by the threshold, so plotting them apart would show one distribution cut at
+        # the threshold rather than anything about the model. Saturation reads directly here
+        # -- collapsed predictions render as flat lines instead of distributions.
+        try:
+            fig = plot_probability_violin(
+                sym_probs, true_labels, threshold=final_test_thresh,
+                title=f'Predicted probability by true label — graph {orig_idx}',
+            )
+            writer.add_figure(f'Probabilities/Graph_{orig_idx}', fig, 0)
+            plt.close(fig)
+        except Exception as exc:
+            print(f"[warn] Probability violin failed for graph {orig_idx}: {exc}")
+
+        # ── Attention parallel coordinates ─────────────────────────────────
+        # One line per directed edge joining its layer-1 and layer-2 attention, coloured by
+        # TP/TN/FP/FN. The same frame backs the CSV, so figure and export cannot drift.
+        try:
+            attn_df = attention_dataframe(
+                attn_np, sym_probs, true_labels, edge_classes,
+                data.edge_index.cpu().numpy(),
+            )
+            fig = plot_attention_parallel_coords(attn_df)
+            writer.add_figure(f'Attention/Graph_{orig_idx}', fig, 0)
+            plt.close(fig)
+
+            out_dir = Path(writer.log_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            attn_df.to_csv(out_dir / f'attention_graph_{orig_idx}.csv', index=False)
+        except Exception as exc:
+            print(f"[warn] Attention parallel coords failed for graph {orig_idx}: {exc}")
 
         # ── Interpretation figures ─────────────────────────────────────────
         try:
