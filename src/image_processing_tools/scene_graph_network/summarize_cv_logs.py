@@ -31,6 +31,18 @@ EPOCH_TAGS = [
     ("Diag/Pred_Std", "pred_std_train"),
     ("Diag/Pred_Mean_Test", "pred_mean_test"),
     ("Diag/Pred_Std_Test", "pred_std_test"),
+    # Node-type head. Absent from edge-only runs, and the per-class entries are absent from
+    # any fold whose held-out image lacks that class -- `_value_at_step` returns None for a
+    # missing tag, so those become empty cells rather than a crash or a fabricated zero.
+    # Each F1 is paired with its support: an F1 read without its denominator is exactly the
+    # misleading number this table exists to prevent (background F1 rests on 4-21 nodes).
+    ("NodeType/Accuracy_Test", "node_accuracy"),
+    ("NodeType/F1_background_Test", "node_f1_background"),
+    ("NodeType/F1_epithelial_Test", "node_f1_epithelial"),
+    ("NodeType/F1_hyphal_Test", "node_f1_hyphal"),
+    ("NodeType/Support_background_Test", "node_support_background"),
+    ("NodeType/Support_epithelial_Test", "node_support_epithelial"),
+    ("NodeType/Support_hyphal_Test", "node_support_hyphal"),
 ]
 
 
@@ -109,8 +121,14 @@ def summarize_cv_logs(log_root: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    cols = ['repeat', 'fold', 'best_epoch', 'auc', 'f1', 'pr_auc', 'threshold',
-            'pred_mean_train', 'pred_std_train', 'pred_mean_test', 'pred_std_test']
+    # Column order, DERIVED from EPOCH_TAGS rather than restated. This list was hardcoded
+    # and silently dropped anything missing from it, so a tag added above never reached the
+    # CSV -- which is exactly how the node-type metrics came to be logged to TensorBoard and
+    # absent from the table for the whole node-type experiment. Deriving it means the two
+    # cannot drift again.
+    cols = (['repeat', 'fold', 'best_epoch']
+            + [col for _, col in EPOCH_TAGS]
+            + ['threshold'])
     return df[[c for c in cols if c in df.columns]].sort_values(['repeat', 'fold']).reset_index(drop=True)
 
 
