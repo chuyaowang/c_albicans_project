@@ -288,8 +288,16 @@ data.node_type        (gnn_data.py:255) — torch.long, regionprops order
 the node head         (see GCN Design Choices)
 ```
 
-> ⚠️ **Forgetting `node_types_list` fails silently.** `create_pyg_data` attaches `data.node_type` only when the list is passed, and `train_model` computes the node loss only `if want_nodes and node_type is not None` (`gnn_train.py:237`). So a dataset built without it, trained at `node_loss_weight=1.0` on a model that *does* have the head, trains happily with the node loss pinned at **0** — the run looks normal and the head learns nothing. Only the mirror case is guarded: `node_loss_weight > 0` against a model without `predict_node_type=True` raises (`gnn_train.py:173`).
+> ⚠️ **Forgetting `node_types_list` used to fail silently — it now raises.** `create_pyg_data` attaches `data.node_type` only when the list is passed. A dataset built without it, trained at `node_loss_weight=1.0` on a model that *does* have the head, used to train happily with the node loss pinned at **0**: the run looked normal, the head stayed at random init, and the result silently reproduced the edge-only baseline. `train_model` now checks the dataset before the first epoch and raises if **no** graph carries `node_type`, mirroring the long-standing guard for the headless model.
 >
-> The tolerance is deliberate — the nuclei pipeline and every dataset built before this work have no `node_type`, and `evaluate_node_types` skips them by design (`gnn_train.py:388`) — but it means **the dataset, not the trainer, is what guarantees the head is trained**. If node metrics are absent or `Loss/Node_Train` is flat at zero, suspect the dataset first.
+> Both guards exist because the symptom is the same and is invisible: a node loss of 0.0 every epoch reads in the logs exactly like a converged head.
+>
+> | asked for a node loss, but… | result |
+> | --- | --- |
+> | the model has no head | raises (`gnn_train.py:173`) |
+> | no graph carries `node_type` | raises (`gnn_train.py:185`) |
+> | *some* graphs carry it | trains on those — legal, so nuclei and fragment graphs can mix |
+>
+> **Backward compatibility is the `node_loss_weight=0.0` default, not a silent no-op at 1.0.** The nuclei pipeline and every dataset built before this work have no `node_type`; they run unchanged at the default weight and never reach the guard. `evaluate_node_types` skips them by design (`gnn_train.py:388`).
 
 See [Cell Mask Graph Data Flow](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Cell%20Mask%20Graph%20Data%20Flow.md) and [GCN Design Choices](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md).

@@ -45,8 +45,15 @@ $$\mathcal{L} = \underbrace{\text{BCE}_{\varepsilon=0.1}}_{\text{always}} \;+\; 
 - **How:** `CrossEntropyLoss` between the [Node Classifier Head](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Design%20Choices.md#Node%20Classifier%20Head%20(optional))'s raw logits and `data.node_type`, computed on a **class-balanced subsample** of nodes (see [Balanced node sampling](#Balanced%20node%20sampling)) and added at weight `node_loss_weight`. Both runs to date used `node_loss_weight = 1.0`. Off by default (`0.0`).
 - **Why combine rather than train separately:** the point is a **joint representation**. The trunk is shared, so the node gradient shapes the embeddings the edge classifier reads. That is the whole mechanism by which "a true edge cannot span background↔cell or epithelial↔hyphal" gets learned — implicitly, from the fact that one representation must serve both tasks. Two separately-trained models would share nothing and learn none of it.
 - **Why the weight is 1.0:** untuned. It was set to 1.0 as the neutral starting point and never swept; the improvement was measured against a matched baseline at that value. Whether the edge task would do better at a lower weight is **unknown and untested**.
-- **Guard:** `node_loss_weight > 0` against a model built without `predict_node_type=True` **raises** (`gnn_train.py:173`) rather than silently training with a loss term that can never be computed.
-  > ⚠️ **The mirror case is not guarded.** The node loss is computed only `if want_nodes and node_type is not None` (`gnn_train.py:237`), so a dataset built **without** `node_types_list` trains happily at `node_loss_weight=1.0` with $\mathcal{L}_{\text{node}}$ pinned at **0** — the head learns nothing and nothing complains. The tolerance is deliberate (the nuclei pipeline and every older dataset have no `node_type`), but it means the dataset is what guarantees the head is trained. If `Loss/Node_Train` is flat at zero, suspect the dataset first.
+- **Guards — both sides.** Asking for a node loss that cannot be computed **raises**, rather than training with a term stuck at zero. There are two ways to ask for one impossibly, and both fail the same invisible way: `Loss/Node_Train` at 0.0 every epoch reads exactly like a converged head, while the run quietly reproduces the edge-only baseline.
+
+    | asked for a node loss, but… | |
+    | --- | --- |
+    | the model has no `predict_node_type=True` | **raises** (`gnn_train.py:173`) |
+    | no graph in the dataset carries `node_type` | **raises** (`gnn_train.py:185`), checked before the first epoch |
+    | *some* graphs carry it | **trains** on those — a partially typed dataset is legal |
+
+    **Backward compatibility is the `node_loss_weight=0.0` default.** The nuclei pipeline and every dataset built before this work have no `node_type` and run unchanged at the default, never reaching the guard. What is refused is asking for the loss at weight 1.0 against data that cannot supply a target.
 - **Experimental basis:** [GCN Model Experiments §11](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md).
 
 ## Negative edge sampling
