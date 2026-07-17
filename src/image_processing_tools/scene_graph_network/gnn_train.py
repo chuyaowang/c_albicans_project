@@ -31,6 +31,9 @@ from image_processing_tools.scene_graph_network.cell_merge_inference import (
 )
 from image_processing_tools.scene_graph_network.summarize_cv_logs import summarize_cv_logs
 from image_processing_tools.scene_graph_network.node_sampling import sample_balanced_nodes
+from image_processing_tools.scene_graph_network.node_metrics import (
+    aggregate_node_metrics, node_type_metrics,
+)
 
 
 def enforce_symmetric_predictions(pred, edge_index, num_nodes):
@@ -376,6 +379,30 @@ def test_model(model, loader, criterion):
         pr_auc = float('nan')
 
     return avg_loss, accuracy, auc_score, pr_auc, f1, best_threshold, pred_mean, pred_std
+
+
+def evaluate_node_types(model, dataset, device):
+    """Node-type metrics over `dataset`, or None when the task does not apply.
+
+    Returns None rather than raising when the model has no node head or no graph carries
+    `node_type`: the nuclei pipeline and every pre-existing dataset are in that position, and
+    they must keep working unchanged.
+    """
+    if not getattr(model, "predict_node_type", False):
+        return None
+    typed = [d for d in dataset if getattr(d, "node_type", None) is not None]
+    if not typed:
+        return None
+
+    model.eval()
+    trues, preds = [], []
+    with torch.no_grad():
+        for data in typed:
+            data = data.to(device)
+            _, node_logits = model(data, return_node_logits=True)
+            preds.append(node_logits.argmax(dim=-1).cpu().numpy())
+            trues.append(data.node_type.cpu().numpy())
+    return node_type_metrics(np.concatenate(trues), np.concatenate(preds))
 
 
 def _stretch_channel(channel):
@@ -930,7 +957,7 @@ def _log_cv_aggregate(log_dir, experiment, pooled_preds, mean_threshold):
         print(f"[warn] Could not write cv_summary.csv: {exc}")
 
 
-def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate, model_params, experiment=None, patience=10, degree_penalty_weight=0.0, neg_sample_ratio=1.0, min_epoch=0, label_smoothing=0.0, log_train_embeddings=True, interpret_column_order='grouped', heatmap_sample_size=15, heatmap_seed=0):
+def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate, model_params, experiment=None, patience=10, degree_penalty_weight=0.0, neg_sample_ratio=1.0, min_epoch=0, label_smoothing=0.0, log_train_embeddings=True, interpret_column_order='grouped', heatmap_sample_size=15, heatmap_seed=0, node_loss_weight=0.0, node_sample_ratio=1.0):
     """
     Performs N-fold cross-validation and tracks results, preventing data leakage
     by dynamically applying Z-score normalization per fold.
@@ -941,6 +968,7 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
     kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
     results = []
     pooled_preds = []
+    pooled_node_metrics = []
 
     print(f"Starting {num_folds}-fold cross-validation...")
 
@@ -985,7 +1013,7 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
         epoch_pbar = tqdm(range(1, max_epochs + 1), desc=f"Training Fold {fold+1}/{num_folds}")
         for epoch in epoch_pbar:
             (train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled,
-             train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
+             train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing, node_loss_weight, node_sample_ratio)
             test_loss, test_acc, test_auc, test_pr_auc, test_f1, _, test_pred_mean, test_pred_std = test_model(model, test_loader, criterion)
 
             if epoch >= min_epoch:
@@ -1042,6 +1070,16 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
         pooled_preds.extend(fold_preds)
 
         results.append({'test_loss': final_test_loss, 'test_acc': final_test_acc, 'test_auc': final_test_auc, 'best_threshold': final_test_thresh})
+
+        node_metrics = evaluate_node_types(model, test_dataset, device)
+        if node_metrics is not None:
+            pooled_node_metrics.append(node_metrics)
+            writer.add_scalar('NodeType/Accuracy_Test', node_metrics['accuracy'], best_epoch)
+            for name, s in node_metrics['per_class'].items():
+                writer.add_scalar(f'NodeType/F1_{name}_Test', s['f1'], best_epoch)
+                writer.add_scalar(f'NodeType/Support_{name}_Test', s['support'], best_epoch)
+            results[-1]['node_accuracy'] = node_metrics['accuracy']   # this fold's dict
+
         writer.close()
 
     avg_loss = np.mean([r['test_loss'] for r in results])
@@ -1056,10 +1094,22 @@ def n_fold_validation(dataset, num_folds, max_epochs, batch_size, learning_rate,
 
     _log_cv_aggregate(log_dir, experiment, pooled_preds, avg_thresh)
 
+    # Each class averaged only over the folds that actually contained it -- images with no
+    # epithelial cells must not drag an epithelial average toward 0.
+    if pooled_node_metrics:
+        agg = aggregate_node_metrics(pooled_node_metrics)
+        lines = [f"{name}: F1 {s['f1_mean']:.4f} +/- {s['f1_std']:.4f} "
+                 f"({s['n_folds']}/{len(pooled_node_metrics)} folds)"
+                 for name, s in agg.items()]
+        print("\nNode type, per class:\n  " + "\n  ".join(lines))
+        agg_writer = SummaryWriter(log_dir=f'{log_dir}/aggregate')
+        agg_writer.add_text('NodeType/Summary', "\n\n".join(lines), 0)
+        agg_writer.close()
+
     return results
 
 
-def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_params, experiment=None, patience=10, degree_penalty_weight=0.0, neg_sample_ratio=1.0, min_epoch=0, label_smoothing=0.0, interpret_column_order='grouped', heatmap_sample_size=15, heatmap_seed=0):
+def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_params, experiment=None, patience=10, degree_penalty_weight=0.0, neg_sample_ratio=1.0, min_epoch=0, label_smoothing=0.0, interpret_column_order='grouped', heatmap_sample_size=15, heatmap_seed=0, node_loss_weight=0.0, node_sample_ratio=1.0):
     """
     Trains the model on the entire dataset to test if it has the capacity to overfit.
     It evaluates the model on the exact same dataset it trains on.
@@ -1100,7 +1150,7 @@ def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_par
     epoch_pbar = tqdm(range(1, max_epochs + 1), desc="Training Overfit Model")
     for epoch in epoch_pbar:
         (train_loss, train_acc, train_bce, train_penalty, train_bce_unsampled,
-         train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing)
+         train_pred_mean, train_pred_std, train_node_loss) = train_model(model, train_loader, optimizers, criterion, degree_penalty_weight, neg_sample_ratio, label_smoothing, node_loss_weight, node_sample_ratio)
         test_loss, test_acc, test_auc, test_pr_auc, test_f1, _, test_pred_mean, test_pred_std = test_model(model, eval_loader, criterion)
 
         if epoch >= min_epoch:
@@ -1132,6 +1182,9 @@ def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_par
         writer.add_scalar('Diag/Pred_Mean_Eval', test_pred_mean, epoch)
         writer.add_scalar('Diag/Pred_Std_Eval', test_pred_std, epoch)
 
+        if node_loss_weight > 0:
+            writer.add_scalar('Loss/Node_Train', train_node_loss, epoch)
+
         if epochs_no_improve >= patience:
             print(f"Early stopping triggered at epoch {epoch}")
             break
@@ -1147,6 +1200,15 @@ def train_overfit_test(dataset, max_epochs, batch_size, learning_rate, model_par
 
     summary_text = f"Best Epoch {best_epoch} Final Loss {final_test_loss:.4f} Final AUC {final_test_auc:.4f}, PR_AUC {final_pr_auc:.4f}, F1 {final_f1:.4f} Thresh: {final_test_thresh:.4f}"
     writer.add_text('Overfit Test Summary', summary_text, 0)
+
+    node_metrics = evaluate_node_types(model, train_dataset, device)
+    if node_metrics is not None:
+        writer.add_scalar('NodeType/Accuracy_Eval', node_metrics['accuracy'], best_epoch)
+        for name, s in node_metrics['per_class'].items():
+            writer.add_scalar(f'NodeType/F1_{name}_Eval', s['f1'], best_epoch)
+            # Support is logged so a class missing from this graph is visible in the log
+            # rather than inferred from a gap in the F1 curves.
+            writer.add_scalar(f'NodeType/Support_{name}_Eval', s['support'], best_epoch)
 
     # Log prediction overlays + interpretation figures for the (over)fit graphs.
     # The training set is the eval set here, so no separate train overlay is added.
