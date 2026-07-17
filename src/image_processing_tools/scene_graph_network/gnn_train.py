@@ -176,6 +176,20 @@ def train_model(model, loader, optimizers, criterion, degree_penalty_weight=0.0,
             "no node head, so the node loss would silently stay 0.0."
         )
 
+    # Same failure, reached from the data side: a head with nothing to learn from leaves
+    # node_loss at 0.0 just as silently, and the run then reproduces the edge-only baseline
+    # while looking like a node-head run. Backward compatibility for the untyped datasets
+    # (nuclei, and everything built before node types) is the node_loss_weight=0.0 default,
+    # which never reaches here -- not a no-op at 1.0. Partially typed datasets stay legal:
+    # only a dataset that can NEVER supply a target is the mistake.
+    if node_loss_weight > 0 and not any(
+            getattr(d, "node_type", None) is not None for d in loader.dataset):
+        raise ValueError(
+            "node_loss_weight > 0 requires graphs carrying node_type; no graph in this "
+            "dataset has one, so the node loss would silently stay 0.0. Pass "
+            "node_types_list to create_pyg_data, or leave node_loss_weight at 0.0."
+        )
+
     for data in loader:
         data = data.to(device)
 

@@ -55,15 +55,47 @@ def test_node_loss_is_zero_when_disabled():
     assert out[7] == 0.0
 
 
-def test_graph_without_node_type_still_trains():
-    """Existing datasets have no node_type; enabling the weight must not crash on them."""
-    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
-    data = _graph()
+def _untyped_loader(seed=0):
+    data = _graph(seed=seed)
     del data.node_type
-    loader = DataLoader([data], batch_size=1)
+    return DataLoader([data], batch_size=1)
+
+
+def test_untyped_dataset_trains_with_the_node_loss_off():
+    """The backward compatibility that matters: existing datasets carry no node_type, and
+    they must keep running. That is the node_loss_weight=0.0 default -- not a silent no-op
+    at 1.0. A node head on the model changes nothing here; it just goes untrained.
+    """
+    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
+    opts = [torch.optim.AdamW(model.parameters(), lr=1e-3)]
+    out = train_model(model, _untyped_loader(), opts, torch.nn.BCELoss())
+    assert out[7] == 0.0
+
+
+def test_node_loss_weight_without_node_type_raises():
+    """Asking for a node loss from data that cannot supply one leaves node_loss at 0.0 for
+    every epoch -- indistinguishable in the logs from a converged head, and it silently
+    reproduces the edge-only baseline while looking like a node-head run. The headless-model
+    case raises for exactly this reason; the missing-labels case must match it.
+    """
+    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
+    opts = [torch.optim.AdamW(model.parameters(), lr=1e-3)]
+    with pytest.raises(ValueError, match="node_type"):
+        train_model(model, _untyped_loader(), opts, torch.nn.BCELoss(), node_loss_weight=1.0)
+
+
+def test_partially_typed_dataset_trains():
+    """Only a WHOLLY untyped dataset is the error. Mixing typed and untyped graphs stays
+    legal, so the head still trains on the ones that can supply a target.
+    """
+    model = Model(hidden_channels=16, dropout_p=0.0, predict_node_type=True)
+    typed = _graph(seed=0)
+    untyped = _graph(seed=1)
+    del untyped.node_type
+    loader = DataLoader([typed, untyped], batch_size=1)
     opts = [torch.optim.AdamW(model.parameters(), lr=1e-3)]
     out = train_model(model, loader, opts, torch.nn.BCELoss(), node_loss_weight=1.0)
-    assert out[7] == 0.0
+    assert out[7] > 0.0
 
 
 def test_node_head_receives_gradient():
