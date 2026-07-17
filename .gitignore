@@ -1,8 +1,19 @@
-# Rendered figures written by the notebooks (723 MB at the time this repo was created).
-# Regenerable, and git cannot delta-compress PNGs -- every re-run would add megabytes to
+# Rendered figures from the image-processing notebooks (686 MB). Regenerable by re-running
+# the notebook, and git cannot delta-compress PNGs, so every re-run would add megabytes to
 # history permanently.
-notebooks/*/output/
+notebooks/1. Qualitative Evaluation/output/
+notebooks/2. Data Processing/output/
 /output/
+
+# notebooks/3. GNN/output/ is deliberately NOT ignored. It holds the GNN experiment logs
+# (cv_experiment/, overfit_experiment/) -- TensorBoard event files, the per-fold summary
+# CSVs and the prediction graphs. Those are run records: re-running gives a different run,
+# not the one you had, so they are irreplaceable rather than regenerable.
+#
+# They are not cheap. `writer.add_figure` embeds each rendered figure INSIDE the event
+# file, so the events are ~53 MB and every CV run adds roughly 15-37 MB permanently. That
+# cost is accepted deliberately: these runs were lost once to a stray `rm -rf output`, and
+# nothing outside git would have brought them back.
 
 # Notebook outputs are stripped on commit by the nbstripout filter (see .gitattributes),
 # not ignored -- they cannot be, since they live inside the tracked .ipynb. They stay in
