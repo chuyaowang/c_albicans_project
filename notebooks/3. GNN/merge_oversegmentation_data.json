@@ -10,7 +10,10 @@
         "Every channel listed under `image` is summed into the intensity image that",
         "drives the node/edge intensity features, so list only channels carrying signal.",
         "Leave `label` empty to build a graph with no training labels (inference only);",
-        "leave `embedding` empty to train without visual features."
+        "leave `embedding` empty to train without visual features.",
+        "  `cell_type` - per-image rule typing each GT cell: {\"all\": \"hyphal\"} for images with",
+        "                only one cell type, else {\"metric\": ..., \"threshold\": ...} in px.",
+        "                Per-image because magnification differs; see the design spec."
     ],
     "samples": [
         {
@@ -23,7 +26,8 @@
             "correct_DIC_shift": [
                 0,
                 0
-            ]
+            ],
+            "cell_type": {"all": "hyphal"}
         },
         {
             "image": {
@@ -35,7 +39,8 @@
             "correct_DIC_shift": [
                 0,
                 0
-            ]
+            ],
+            "cell_type": {"all": "hyphal"}
         },
         {
             "image": {
@@ -49,7 +54,8 @@
             "correct_DIC_shift": [
                 5,
                 22
-            ]
+            ],
+            "cell_type": {"metric": "mean_width", "threshold": 137.5}
         },
         {
             "image": {
@@ -61,7 +67,8 @@
             "correct_DIC_shift": [
                 0,
                 0
-            ]
+            ],
+            "cell_type": {"metric": "mean_width", "threshold": 101.0}
         },
         {
             "image": {
@@ -73,7 +80,8 @@
             "correct_DIC_shift": [
                 0,
                 0
-            ]
+            ],
+            "cell_type": {"metric": "mean_width", "threshold": 100.6}
         },
         {
             "image": {
@@ -85,7 +93,8 @@
             "correct_DIC_shift": [
                 0,
                 0
-            ]
+            ],
+            "cell_type": {"metric": "mean_width", "threshold": 159.8}
         }
     ]
 }
