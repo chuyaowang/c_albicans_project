@@ -46,6 +46,21 @@ Compare with the nuclei pipeline in [GCN Data Flow](C_Albicans%20Thesis%20Projec
 
 The edge schema being a **positional superset** is the load-bearing design decision: because the fragment pipeline kept the nuclei column *roles* in columns 0–5 and appended its four new features after them, the trainer's hard-coded normalization contract (z-score col 0, skip col 1) carried over untouched.
 
+#### Rotation and translation invariance of the six added features
+
+The nuclei features were made rotation- and translation-invariant deliberately ([Rotation augmentations](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Model%20Experiments.md#Rotation%20augmentations)). **That experiment predates the fragment schema and never covered these six**, so their invariance is established here on its own terms — each is a ratio, an isotropic mean, or a *difference* of orientations, never an absolute position or angle:
+
+| added feature | why invariant |
+| --- | --- |
+| `solidity` (node) | `area / convex_hull_area` — a ratio |
+| `context_intensity` (node) | mean over an isotropic ring of width `ring_width` around the mask; a mean is order-independent |
+| `contact_frac` (edge) | fraction of the smaller mask's boundary within `contact_tau` of the other — purely distance-based |
+| `area_ratio` (edge) | `min(area) / max(area)` |
+| `axis_collinearity` (edge) | `abs(cos(orientation_i − orientation_j))` — a **difference** of orientations, so a global rotation adds the same constant to both and cancels |
+| `intensity_continuity` (edge) | correlation of DIC profiles sampled along `u`, which is derived from the junction geometry and therefore rotates with the image |
+
+> ⚠️ **Exact only for 90° rotations and flips.** Those are lossless index permutations (`np.rot90`), so the features come out bit-identical. **At arbitrary angles the raster is resampled**, which perturbs every intensity-derived feature (`interior_intensity`, `context_intensity`, `average_intensity`, `intensity_continuity`) and slightly changes rasterised areas and axis lengths. The geometry is invariant in the continuum; the pixel grid is not. This is a property of raster resampling, not of the feature design — and it is why rotation augmentation cannot manufacture training signal for the tabular branch. See [Future Directions](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md).
+
 ### Visual branch — box source unique, everything else common
 
 | | Nuclei (historical) | Cell fragment (live) | |

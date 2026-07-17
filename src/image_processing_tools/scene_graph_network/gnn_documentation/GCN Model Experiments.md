@@ -18,6 +18,16 @@
 - **Result:** The model fits all rotations successfully, but only after some [Node features](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Data%20Flow.md#Node%20features) and [Edge features](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Data%20Flow.md#Edge%20features) were redesigned to be rotation- and translation-invariant (absolute coordinates and absolute angles were replaced with relative quantities).
 - **Decision:** Confirms invariances must be built into the features, not learned from data. Kept the rotation-invariant feature set going forward.
 
+> ⚠️ **Scope of "rotation-invariant": 90° multiples and flips only.**
+>
+> **Where the augmentation lives.** `augment_rotate` is `[np.rot90(image, k=i) for i in range(4)]`, defined identically in **both** pipelines — `dapi_tracing/gnn_data.py:24` and `scene_graph_network/gnn_data.py:24`. Its only caller is this experiment's notebook, `notebooks/3. GNN/1_Simple GNN Test Augmented.ipynb` (cell 4), which imports the **`dapi_tracing`** copy; the `scene_graph_network` copy is uncalled.
+>
+> So **0/90/180/270 was the only rotation ever tested**, and `np.rot90` is a lossless index permutation — a re-indexing, not a resampling.
+>
+> At **arbitrary angles the tabular features are *not* invariant**, for a reason that has nothing to do with their design: rotating a raster by a non-multiple of 90° **resamples pixels**. That perturbs every intensity-derived feature (`interior_intensity`, `context_intensity`, `average_intensity`, `intensity_continuity`) and slightly changes rasterised areas and axis lengths. The geometry is invariant in the continuum; the pixel grid is not.
+>
+> Consequence for augmentation: a 90° rotation or a flip yields a **byte-identical tabular graph** and so adds **nothing** to the tabular branch. An arbitrary angle adds only *resampling noise*, not biology. The [visual branch](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/GCN%20Visual%20Feature%20Data%20Flow.md) is a different matter — it reads **axis-aligned** RoI boxes, so a rotation genuinely changes the crop. See [Future Directions](C_Albicans%20Thesis%20Project/5.%20Results/4.%20GCN%20Design%20and%20Training/Future%20Directions.md).
+
 ### Five-graph cross validation
 
 - **Setup:** Five manually labeled graphs (3 easy straight-chain graphs, 2 harder graphs with turns). Five-fold leave-one-out CV, repeated 3 times.
