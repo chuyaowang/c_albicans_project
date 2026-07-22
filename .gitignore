@@ -46,3 +46,4 @@ dist/
 # Node
 node_modules/
 .superpowers/
+docs/superpowers/
