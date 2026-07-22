@@ -174,6 +174,67 @@ Classify -- "Edge Probabilities" --> Out([Predictions])
 
   
 
+## 1b. Simplified Overview (for thesis display)
+
+A reduced version of the diagram above, showing only the main modules in sequence. The
+visual branch is collapsed to a single optional block, and the internal MLP structure,
+RoIAlign/CNN sub-blocks, and skip-connection/GraphNorm steps of each module are omitted
+here — see the detailed diagrams below for those.
+
+```mermaid
+
+flowchart TD
+
+X[(Node Features x)]
+
+EI[(Edge Index)]
+
+EA[(Edge Attributes edge_attr)]
+
+subgraph Visual [Visual branch — optional]
+
+Vis[Visual feature fusion]
+
+end
+
+X --> Vis
+
+EA --> Vis
+
+X -.->|"if use_visual_features=False"| Conv1
+
+EA -.->|"if use_visual_features=False"| Conv1
+
+Vis --> Conv1[GCNConv Layer 1]
+
+EI --> Conv1
+
+Conv1 --> EU1[EdgeUpdater 1]
+
+EI --> EU1
+
+Conv1 --> Conv2[GCNConv Layer 2]
+
+EU1 --> Conv2
+
+EI --> Conv2
+
+Conv2 --> EU2[EdgeUpdater 2]
+
+EI --> EU2
+
+Conv2 --> Classify[Classifier]
+
+EU2 --> Classify
+
+EI --> Classify
+
+Classify --> Out([Edge Probabilities])
+
+```
+
+  
+
 ## 2. GCN Layer Architecture
 
   
