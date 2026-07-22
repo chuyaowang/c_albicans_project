@@ -6,6 +6,7 @@ notebooks/2. Data Processing/output/
 /output/
 thesis_figures/
 master_thesis.tex
+master_thesis*
 
 # notebooks/3. GNN/output/ is deliberately NOT ignored. It holds the GNN experiment logs
 # (cv_experiment/, overfit_experiment/) -- TensorBoard event files, the per-fold summary
