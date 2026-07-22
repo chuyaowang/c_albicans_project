@@ -112,8 +112,7 @@ correlation with them.
 ## Conclusion and Future Work
 
 Cross-validation showed the model memorizes any single graph almost perfectly but
-generalizes poorly across folds, and the interpretation figures trace this to the
-diversity of imaging modalities across the six training images rather than a lack of
+generalizes poorly across folds. The node and edge embeddings become more separated after the graph convolution layers (shown in the PCA and PLSDA plots), yet the testing graph's distribution maps poorly to this separation. The limiting factor here is therefore the diversity of imaging modalities across the six training images rather than a lack of
 model capacity. Future work:
 
 - Generate synthetic over-segmentation data by cutting ground-truth masks into new
