@@ -20,9 +20,9 @@
             "image": {
                 "dic": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_01_DIC.tif"
             },
-            "ais": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs_finetune/CET112_HWP1Cal610_6h_GoC_01_DIC_automatic_masks.tif",
+            "ais": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs/CET112_HWP1Cal610_6h_GoC_01_DIC_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_01_DIC_label.tif",
-            "embedding": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs_finetune/CET112_HWP1Cal610_6h_GoC_01_DIC_tiled.zarr",
+            "embedding": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs/CET112_HWP1Cal610_6h_GoC_01_DIC__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 0,
                 0
@@ -33,9 +33,9 @@
             "image": {
                 "dic": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC.tif"
             },
-            "ais": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs_finetune/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_automatic_masks.tif",
+            "ais": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Wang/260213_HWPA_DAPI/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_label.tif",
-            "embedding": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs_finetune/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC_tiled.zarr",
+            "embedding": "~/A8/Data_Wang/260213_HWPA_DAPI/microsam_outputs/CET112_HWP1Cal610_6h_GoC_300ms_03_DIC__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 0,
                 0
@@ -48,9 +48,9 @@
                 "fluorescence": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/MAX_C2_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI.tif",
                 "dapi": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/MAX_C3_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI.tif"
             },
-            "ais": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/microsam_finetune_outputs/MAX_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI_CET146_ECE1Q670_cFOSQ570_06_DIC,CFP,DAPI_automatic_masks.tif",
+            "ais": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/microsam_outputs/MAX_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI_CET146_ECE1Q670_cFOSQ570_06_DIC,CFP,DAPI_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/CET146_ECE1Q670_cFOSQ570_06_DIC_label.tif",
-            "embedding": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/microsam_finetune_outputs/MAX_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI_CET146_ECE1Q670_cFOSQ570_06_DIC,CFP,DAPI_tiled.zarr",
+            "embedding": "~/A8/Data_Eva/Training data Chuyao/260415_Ca_Co_She3Mutants_Ca922_6h_F12_ECE1_cFOS/CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI/microsam_outputs/MAX_CET146_ECE1Q670_cFOSQ570_06_CY5, CFP, DAPI_CET146_ECE1Q670_cFOSQ570_06_DIC,CFP,DAPI__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 5,
                 22
@@ -61,9 +61,9 @@
             "image": {
                 "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/CET155_Cocu_Phalloidin_01_DIC.tif"
             },
-            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/microsam_outputs/CET155_Cocu_Phalloidin_01_DIC_automatic_masks.tif",
+            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/microsam_outputs/CET155_Cocu_Phalloidin_01_DIC_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/CET155_Cocu_Phalloidin_01_DIC_label.tif",
-            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/microsam_outputs/CET155_Cocu_Phalloidin_01_DIC_tiled.zarr",
+            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/03/microsam_outputs/CET155_Cocu_Phalloidin_01_DIC__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 0,
                 0
@@ -74,9 +74,9 @@
             "image": {
                 "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/CET155_Cocu_Phalloidin_04_DIC.tif"
             },
-            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/microsam_outputs/CET155_Cocu_Phalloidin_04_DIC_automatic_masks.tif",
+            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/microsam_outputs/CET155_Cocu_Phalloidin_04_DIC_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/CET155_Cocu_Phalloidin_04_DIC_label.tif",
-            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/microsam_outputs/CET155_Cocu_Phalloidin_04_DIC_tiled.zarr",
+            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/04/microsam_outputs/CET155_Cocu_Phalloidin_04_DIC__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 0,
                 0
@@ -87,9 +87,9 @@
             "image": {
                 "dic": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/CET155_Cocu_Phalloidin_05_DIC.tif"
             },
-            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/microsam_outputs/CET155_Cocu_Phalloidin_05_DIC_automatic_masks.tif",
+            "ais": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/microsam_outputs/CET155_Cocu_Phalloidin_05_DIC_automatic_vit_b_candida_2026-06-25_6b204b7c_masks.tif",
             "label": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/CET155_Cocu_Phalloidin_05_DIC_labels.tif",
-            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/microsam_outputs/CET155_Cocu_Phalloidin_05_DIC_tiled.zarr",
+            "embedding": "~/A8/Data_Roan/260327_Cocultures_Mutants_Phalloidin/CET155/05/microsam_outputs/CET155_Cocu_Phalloidin_05_DIC__vit_b_candida_2026-06-25_6b204b7c_tiled.zarr",
             "correct_DIC_shift": [
                 0,
                 0
