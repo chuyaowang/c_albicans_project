@@ -1,6 +1,8 @@
 import logging
 import os
 import json
+import hashlib
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 import cv2
@@ -91,6 +93,7 @@ class MicroSAMPipeline:
         self.predictor: Optional[SamPredictor] = None
         self.segmenter: Optional[Union[AMGBase, InstanceSegmentationWithDecoder]] = None
         self._initialize_models()
+        self.model_tag = self._model_tag()
 
         self.results: Dict[str, Dict[str, Any]] = {}
 
@@ -149,16 +152,50 @@ class MicroSAMPipeline:
         if self.predictor is None:
             raise RuntimeError("Model initialization failed.")
 
+    def _model_tag(self) -> str:
+        """Short identifier for the loaded model, used to keep embedding caches and
+        saved outputs from different models apart.
+
+        Two models never share a cache: the tag combines the checkpoint stem, the
+        checkpoint file's modification date (YYYY-MM-DD), and an 8-char hash of the
+        full checkpoint/decoder/model_type/mtime identity. The stem and date keep
+        the tag human-readable; the hash guards against a same-day retrain that
+        reuses the same filename. Without this, whichever model ran first on an
+        image cached its embeddings and every later model silently reused them,
+        which fed a finetuned decoder the base encoder's features.
+        """
+        ckpt = Path(self.config["checkpoint_path"]).expanduser()
+        decoder = self.config.get("decoder_checkpoint_path")
+        decoder = str(Path(decoder).expanduser()) if decoder else ""
+        try:
+            mtime = ckpt.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d") if mtime else "nodate"
+        identity = f"{ckpt}|{decoder}|{self.config['model_type']}|{mtime}"
+        digest = hashlib.md5(identity.encode()).hexdigest()[:8]
+        return f"{ckpt.stem}_{date_str}_{digest}"
+
     def _get_embedding_path(self, image_container: 'ImageContainer') -> Path:
         """Returns the per-container zarr embedding path inside microsam_outputs/.
 
-        Tiled and non-tiled embeddings are stored under different names so that
-        switching tiling config never silently reuses an incompatible cache.
+        The model tag is part of the filename so a cache is never reused across
+        models. The tile shape and halo are also encoded, so different tiling
+        settings (and no-tiling) each keep their own cache and never overwrite one
+        another. A tiled embedding is incompatible with a differently-tiled or
+        untiled run, so they must not share a filename.
         """
         tiling_config = self.config.get("tiling", {})
-        use_tiling = tiling_config.get("tile_shape") is not None and tiling_config.get("halo") is not None
-        suffix = "_tiled" if use_tiling else ""
-        return image_container._source_paths[0].parent / "microsam_outputs" / f"{image_container.name}{suffix}.zarr"
+        tile_shape = tiling_config.get("tile_shape")
+        halo = tiling_config.get("halo")
+        if tile_shape is not None and halo is not None:
+            th, tw = tuple(tile_shape)
+            hy, hx = tuple(halo)
+            suffix = f"_tile{th}x{tw}_halo{hy}x{hx}"
+        else:
+            suffix = ""
+        return (image_container._source_paths[0].parent / "microsam_outputs"
+                / f"{image_container.name}__{self.model_tag}{suffix}.zarr")
 
     def _rescale_to_original(self, arr: np.ndarray, container: 'ImageContainer', is_float: bool = False) -> np.ndarray:
         """
@@ -822,15 +859,15 @@ class MicroSAMPipeline:
         Saves all segmentation results for every container to:
             <source_file_parent>/microsam_outputs/
 
-        The segmentation mode is embedded in every filename so results from AIS
-        and prompted runs on the same image never overwrite each other:
+        The segmentation mode and the model tag are embedded in every filename so
+        results from different modes or different models on the same image never
+        overwrite each other. With `tag = {mode}_{model_tag}`:
 
-            {name}_ais_masks.tif        — AIS instance labels at original resolution
-            {name}_ais_raw.tif          — (3, …) float32 [fg, center_dist, boundary_dist]
-            {name}_prompted_masks.tif   — prompted instance labels at original resolution
-            {name}_prompted_prompts.npy — raw prompt coordinates
-            {name}_prompted_viz.tif     — labeled annotation: seed slice shows prompt
-                                          geometry, all other slices are zero
+            {name}_{tag}_masks.tif      — instance labels at original resolution
+            {name}_{tag}_raw.tif        — (3, …) float32 [fg, center_dist, boundary_dist]
+            {name}_{tag}_prompts.npy    — raw prompt coordinates (prompted mode)
+            {name}_{tag}_viz.tif        — labeled annotation: seed slice shows prompt
+                                          geometry, all other slices are zero (prompted mode)
         """
         if not self.results:
             logger.warning("No results to save. Please run the pipeline first.")
@@ -852,7 +889,9 @@ class MicroSAMPipeline:
 
             output_dir = container._source_paths[0].parent / "microsam_outputs"
             output_dir.mkdir(parents=True, exist_ok=True)
-            stem = f"{result_key}_{mode}"
+            # Model tag in the stem keeps results from different models side by
+            # side instead of overwriting each other on the same image.
+            stem = f"{result_key}_{mode}_{self.model_tag}"
 
             # --- Instance-labeled mask at original resolution ---
             if isinstance(masks, list):
