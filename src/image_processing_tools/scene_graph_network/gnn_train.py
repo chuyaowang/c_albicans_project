@@ -22,9 +22,12 @@ from image_processing_tools.scene_graph_network.simple_gnn import Model, _node_b
 from image_processing_tools.scene_graph_network.gnn_data import create_data_loader
 from image_processing_tools.scene_graph_network.gnn_interpret import (
     collect_embeddings, classify_edges, compute_per_edge_attributions,
-    plot_combined_figure, plot_pca_figure, sample_heatmap_edges,
+    plot_attribution_heatmap, plot_pca_figure, plot_plsda_figure, sample_heatmap_edges,
+    plot_node_pca_figure, plot_node_plsda_figure,
     attention_dataframe, plot_attention_parallel_coords,
     plot_probability_violin, plot_edge_outcome_by_node_pair,
+    FIG_TITLE_FS, FIG_AXIS_FS, FIG_TICK_FS, FIG_LEGEND_FS,
+    NODE_TYPE_COLORS, NODE_TYPE_NAMES,
 )
 from image_processing_tools.scene_graph_network.cell_merge_inference import (
     merge_fragments, summarize_cells,
@@ -481,13 +484,13 @@ def plot_merge_comparison(image, ais_labels, merged_labels, gt_labels=None,
     fig, axes = plt.subplots(2, 2, figsize=(13, 13))
 
     _imshow_microscopy(axes[0, 0], image, downsample=2)
-    axes[0, 0].set_title('Source image', fontsize=11)
+    axes[0, 0].set_title('Source image', fontsize=FIG_TITLE_FS)
 
     def _show(ax, labels, title):
         labels = np.asarray(labels)[::2, ::2]
         rgb = label2rgb(labels, bg_label=0, bg_color=(0, 0, 0))
         ax.imshow(rgb)
-        ax.set_title(title, fontsize=11)
+        ax.set_title(title, fontsize=FIG_TITLE_FS)
 
     n_frag = int(np.asarray(ais_labels).max())
     _show(axes[0, 1], ais_labels, f'AIS segmentation — {n_frag} fragments')
@@ -497,8 +500,8 @@ def plot_merge_comparison(image, ais_labels, merged_labels, gt_labels=None,
         _show(axes[1, 0], gt_labels, f'Ground truth — {n_gt} cells')
     else:
         axes[1, 0].text(0.5, 0.5, 'no ground truth', ha='center', va='center',
-                        fontsize=12, color='gray')
-        axes[1, 0].set_title('Ground truth — unavailable', fontsize=11)
+                        fontsize=FIG_AXIS_FS, color='gray')
+        axes[1, 0].set_title('Ground truth — unavailable', fontsize=FIG_TITLE_FS)
 
     n_merged = len(np.unique(np.asarray(merged_labels))) - 1
     title = f'Predicted merge — {n_merged} cells'
@@ -510,12 +513,6 @@ def plot_merge_comparison(image, ais_labels, merged_labels, gt_labels=None,
         ax.axis('off')
     fig.tight_layout()
     return fig
-
-
-# Background is the reject class, so it takes the alarm colour; the two real cell types get
-# cool/warm. Matches 11_Node Type Classification.ipynb, so the notebooks read alike.
-NODE_TYPE_COLORS = {0: (1.0, 0.15, 0.15), 1: (0.20, 0.45, 1.0), 2: (1.0, 0.55, 0.0)}
-NODE_TYPE_NAMES = {0: 'background', 1: 'epithelial', 2: 'hyphal'}
 
 
 def _node_type_rgb(ais_labels, fragment_labels, types, downsample=1):
@@ -541,24 +538,24 @@ def plot_node_type_comparison(image, ais_labels, fragment_labels, true_types, pr
     fig, axes = plt.subplots(2, 2, figsize=(13, 13))
 
     _imshow_microscopy(axes[0, 0], image, downsample=2)
-    axes[0, 0].set_title('Source image', fontsize=11)
+    axes[0, 0].set_title('Source image', fontsize=FIG_TITLE_FS)
 
     n_frag = int(np.asarray(ais_labels).max())
     axes[0, 1].imshow(label2rgb(np.asarray(ais_labels)[::2, ::2], bg_label=0,
                                 bg_color=(0, 0, 0)))
-    axes[0, 1].set_title(f'AIS segmentation — {n_frag} fragments', fontsize=11)
+    axes[0, 1].set_title(f'AIS segmentation — {n_frag} fragments', fontsize=FIG_TITLE_FS)
 
     def _counts(t):
         c = np.bincount(t, minlength=3)
         return f'bg {c[0]} | epi {c[1]} | hyph {c[2]}'
 
     axes[1, 0].imshow(_node_type_rgb(ais_labels, fragment_labels, true_types, 2))
-    axes[1, 0].set_title(f'Ground-truth types — {_counts(true_types)}', fontsize=11)
+    axes[1, 0].set_title(f'Ground-truth types — {_counts(true_types)}', fontsize=FIG_TITLE_FS)
 
     acc = float((pred_types == true_types).mean()) if len(true_types) else float('nan')
     axes[1, 1].imshow(_node_type_rgb(ais_labels, fragment_labels, pred_types, 2))
     axes[1, 1].set_title(f'Predicted types — {_counts(pred_types)}\naccuracy {acc:.3f}',
-                         fontsize=11)
+                         fontsize=FIG_TITLE_FS)
 
     for ax in axes.ravel():
         ax.axis('off')
@@ -566,7 +563,7 @@ def plot_node_type_comparison(image, ais_labels, fragment_labels, true_types, pr
                                markerfacecolor=NODE_TYPE_COLORS[k], markeredgecolor='gray',
                                markersize=11, label=NODE_TYPE_NAMES[k])
                         for k in (0, 1, 2)],
-               loc='lower center', ncol=3, fontsize=11, frameon=False)
+               loc='lower center', ncol=3, fontsize=FIG_LEGEND_FS, frameon=False)
     fig.tight_layout(rect=[0, 0.03, 1, 1])
     return fig
 
@@ -712,7 +709,7 @@ def plot_edge_predictions(image, centroids, edge_index, predictions, ground_trut
             Line2D([0], [0], color='orange', lw=2, linestyle='--', label='False Negative'),
             Line2D([0], [0], color='blue', lw=1, linestyle=':', alpha=0.5, label='True Negative')
         ]
-        ax.legend(handles=legend_elements, loc='upper right')
+        ax.legend(handles=legend_elements, loc='upper right', fontsize=FIG_LEGEND_FS)
 
     ax.axis('off')
     return fig
@@ -732,6 +729,73 @@ def _collect_train_embeddings(model, train_dataset, device):
         emb, _ = collect_embeddings(model, data, device)
         emb_list.append(emb)
         label_list.append(data.edge_label.cpu().numpy().astype(np.float32))
+    return np.vstack(emb_list), np.concatenate(label_list)
+
+
+def _collect_train_pre_conv_embeddings(model, train_dataset, device):
+    """Collect and concatenate pre-graph-conv edge embeddings and true labels for all
+    training graphs, mirroring `_collect_train_embeddings` for the pre-logit case.
+
+    Returns:
+        train_emb:    (E_tr, D) float32 ndarray of concatenated embeddings.
+        train_labels: (E_tr,)   float32 ndarray of concatenated true labels.
+    """
+    model.eval()
+    emb_list, label_list = [], []
+    for data in train_dataset:
+        with torch.no_grad():
+            emb = model.pre_conv_edge_embedding(data.to(device))
+        emb_list.append(emb.cpu().numpy().astype(np.float32))
+        label_list.append(data.edge_label.cpu().numpy().astype(np.float32))
+    return np.vstack(emb_list), np.concatenate(label_list)
+
+
+def _collect_train_node_embeddings(model, train_dataset, device):
+    """Collect and concatenate pre-classifier node embeddings and true node types for
+    every training graph that carries `node_type`, mirroring `_collect_train_embeddings`
+    for the node case. Training graphs without node types (e.g. an older dataset
+    version) are skipped rather than raising.
+
+    Returns:
+        (train_emb, train_types), or (None, None) if no training graph qualifies.
+        train_emb:   (N_tr, D) float32 ndarray of concatenated node embeddings.
+        train_types: (N_tr,)   int64   ndarray of concatenated true node types.
+    """
+    model.eval()
+    emb_list, label_list = [], []
+    for data in train_dataset:
+        true_types = getattr(data, 'node_type', None)
+        if true_types is None:
+            continue
+        with torch.no_grad():
+            emb = model.node_embedding(data.to(device))
+        emb_list.append(emb.cpu().numpy().astype(np.float32))
+        label_list.append(true_types.cpu().numpy().astype(np.int64))
+    if not emb_list:
+        return None, None
+    return np.vstack(emb_list), np.concatenate(label_list)
+
+
+def _collect_train_pre_conv_node_embeddings(model, train_dataset, device):
+    """Collect and concatenate pre-graph-conv node embeddings and true node types for
+    every training graph that carries `node_type`, mirroring
+    `_collect_train_node_embeddings` for the pre-conv case.
+
+    Returns:
+        (train_emb, train_types), or (None, None) if no training graph qualifies.
+    """
+    model.eval()
+    emb_list, label_list = [], []
+    for data in train_dataset:
+        true_types = getattr(data, 'node_type', None)
+        if true_types is None:
+            continue
+        with torch.no_grad():
+            emb = model.pre_conv_node_embedding(data.to(device))
+        emb_list.append(emb.cpu().numpy().astype(np.float32))
+        label_list.append(true_types.cpu().numpy().astype(np.int64))
+    if not emb_list:
+        return None, None
     return np.vstack(emb_list), np.concatenate(label_list)
 
 
@@ -846,11 +910,34 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
 
     # Collect training embeddings once, reused for every test graph in this fold
     train_emb, train_labels = None, None
+    train_pre_conv_emb, train_pre_conv_labels = None, None
+    train_node_emb, train_node_types = None, None
+    train_pre_conv_node_emb, train_pre_conv_node_types = None, None
     if train_dataset:
         try:
             train_emb, train_labels = _collect_train_embeddings(model, train_dataset, device)
         except Exception as exc:
             print(f"[warn] Could not collect training embeddings: {exc}")
+        try:
+            train_pre_conv_emb, train_pre_conv_labels = _collect_train_pre_conv_embeddings(
+                model, train_dataset, device
+            )
+        except Exception as exc:
+            print(f"[warn] Could not collect training pre-graph-conv embeddings: {exc}")
+
+        if getattr(model, 'predict_node_type', False):
+            try:
+                train_node_emb, train_node_types = _collect_train_node_embeddings(
+                    model, train_dataset, device
+                )
+            except Exception as exc:
+                print(f"[warn] Could not collect training node embeddings: {exc}")
+            try:
+                train_pre_conv_node_emb, train_pre_conv_node_types = (
+                    _collect_train_pre_conv_node_embeddings(model, train_dataset, device)
+                )
+            except Exception as exc:
+                print(f"[warn] Could not collect training pre-graph-conv node embeddings: {exc}")
 
     for i, orig_idx in enumerate(test_idx):
         data = test_dataset[i]
@@ -867,6 +954,9 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
                     return_node_logits=True
                 )
                 pred_types = node_logits.argmax(dim=-1).cpu().numpy()
+                node_emb_np = model.node_embedding(data).cpu().numpy().astype(np.float32)
+                pre_conv_node_np = model.pre_conv_node_embedding(data).cpu().numpy().astype(np.float32)
+                true_types_np = data.node_type.cpu().numpy()
             else:
                 raw_pred, emb, layer_attentions = model(
                     data, return_embeddings=True, return_attention=True
@@ -883,6 +973,7 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             pred_labels = (sym_pred >= final_test_thresh).float().cpu().numpy()
             attn_np     = (alpha1.cpu().numpy(), alpha2.cpu().numpy())
             emb_np      = emb.cpu().numpy().astype(np.float32)
+            pre_conv_np = model.pre_conv_edge_embedding(data).cpu().numpy().astype(np.float32)
 
         true_labels  = data.edge_label.cpu().numpy()
         edge_classes = classify_edges(sym_probs, true_labels, final_test_thresh)
@@ -972,16 +1063,13 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             print(f"[warn] Merge figure failed for graph {orig_idx}: {exc}")
             traceback.print_exc()
 
-        # ── Interpretation figures ─────────────────────────────────────────
+        # ── Interpretation: attribution heatmap (standalone, no PCA/PLS-DA row) ─
         try:
             attr_matrix, feature_names, groups = compute_per_edge_attributions(
                 model, data, device
             )
-            fig = plot_combined_figure(
-                emb_np, true_labels, edge_classes,
-                attr_matrix, sym_probs, feature_names, groups,
-                train_embeddings=train_emb,
-                train_true_labels=train_labels,
+            fig = plot_attribution_heatmap(
+                attr_matrix, sym_probs, edge_classes, feature_names, groups,
                 column_order=column_order,
             )
             writer.add_figure(f'Interpretation/Graph_{orig_idx}', fig, 0)
@@ -992,29 +1080,109 @@ def _log_figures(model, test_dataset, test_idx, writer, final_test_thresh, devic
             heatmap_idx = sample_heatmap_edges(
                 true_labels, n_per_class=heatmap_sample_size, seed=heatmap_seed,
             )
-            fig = plot_combined_figure(
-                emb_np, true_labels, edge_classes,
-                attr_matrix, sym_probs, feature_names, groups,
-                train_embeddings=train_emb,
-                train_true_labels=train_labels,
-                column_order=column_order,
-                heatmap_idx=heatmap_idx,
+            fig = plot_attribution_heatmap(
+                attr_matrix, sym_probs, edge_classes, feature_names, groups,
+                column_order=column_order, heatmap_idx=heatmap_idx,
             )
             writer.add_figure(f'Interpretation/Graph_{orig_idx}_sampled', fig, 0)
             plt.close(fig)
         except Exception as exc:
             import traceback
-            print(f"[warn] Interpretation failed for graph {orig_idx}: {exc}")
+            print(f"[warn] Attribution heatmap failed for graph {orig_idx}: {exc}")
             traceback.print_exc()
+
+        # ── Interpretation: pre-logit embedding, PCA + PLS-DA (separate figures) ─
+        try:
+            fig = plot_pca_figure(
+                emb_np, edge_classes,
+                train_embeddings=train_emb, train_true_labels=train_labels,
+            )
+            writer.add_figure(f'Interpretation/Graph_{orig_idx}_pca_prelogit', fig, 0)
+            plt.close(fig)
+        except Exception as exc:
+            print(f"[warn] Pre-logit PCA failed for graph {orig_idx}: {exc}")
+
+        try:
+            fig = plot_plsda_figure(
+                emb_np, true_labels, edge_classes,
+                train_embeddings=train_emb, train_true_labels=train_labels,
+            )
+            writer.add_figure(f'Interpretation/Graph_{orig_idx}_plsda_prelogit', fig, 0)
+            plt.close(fig)
+        except Exception as exc:
+            print(f"[warn] Pre-logit PLS-DA failed for graph {orig_idx}: {exc}")
+
+        # ── Interpretation: pre-graph-conv embedding, PCA + PLS-DA (separate figures) ─
+        try:
+            fig = plot_pca_figure(
+                pre_conv_np, edge_classes,
+                train_embeddings=train_pre_conv_emb,
+                train_true_labels=train_pre_conv_labels,
+                embedding_label='pre-graph-conv embeddings',
+            )
+            writer.add_figure(f'Interpretation/Graph_{orig_idx}_pca_preconv', fig, 0)
+            plt.close(fig)
+        except Exception as exc:
+            print(f"[warn] Pre-graph-conv PCA failed for graph {orig_idx}: {exc}")
+
+        try:
+            fig = plot_plsda_figure(
+                pre_conv_np, true_labels, edge_classes,
+                train_embeddings=train_pre_conv_emb,
+                train_true_labels=train_pre_conv_labels,
+                embedding_label='pre-graph-conv embeddings',
+            )
+            writer.add_figure(f'Interpretation/Graph_{orig_idx}_plsda_preconv', fig, 0)
+            plt.close(fig)
+        except Exception as exc:
+            print(f"[warn] Pre-graph-conv PLS-DA failed for graph {orig_idx}: {exc}")
+
+        # ── Node-type embedding interpretation (only when node types are being
+        # trained and predicted) ────────────────────────────────────────────
+        if want_nodes:
             try:
-                fig_fb = plot_pca_figure(
-                    emb_np, edge_classes,
-                    train_embeddings=train_emb, train_true_labels=train_labels,
+                fig = plot_node_pca_figure(
+                    node_emb_np, pred_types,
+                    train_embeddings=train_node_emb, train_true_types=train_node_types,
                 )
-                writer.add_figure(f'Interpretation/Graph_{orig_idx}', fig_fb, 0)
-                plt.close(fig_fb)
-            except Exception:
-                pass
+                writer.add_figure(f'NodeType/Graph_{orig_idx}_pca_prelogit', fig, 0)
+                plt.close(fig)
+            except Exception as exc:
+                print(f"[warn] Node pre-classifier PCA failed for graph {orig_idx}: {exc}")
+
+            try:
+                fig = plot_node_plsda_figure(
+                    node_emb_np, true_types_np, pred_types,
+                    train_embeddings=train_node_emb, train_true_types=train_node_types,
+                )
+                writer.add_figure(f'NodeType/Graph_{orig_idx}_plsda_prelogit', fig, 0)
+                plt.close(fig)
+            except Exception as exc:
+                print(f"[warn] Node pre-classifier PLS-DA failed for graph {orig_idx}: {exc}")
+
+            try:
+                fig = plot_node_pca_figure(
+                    pre_conv_node_np, pred_types,
+                    train_embeddings=train_pre_conv_node_emb,
+                    train_true_types=train_pre_conv_node_types,
+                    embedding_label='pre-graph-conv embeddings',
+                )
+                writer.add_figure(f'NodeType/Graph_{orig_idx}_pca_preconv', fig, 0)
+                plt.close(fig)
+            except Exception as exc:
+                print(f"[warn] Node pre-graph-conv PCA failed for graph {orig_idx}: {exc}")
+
+            try:
+                fig = plot_node_plsda_figure(
+                    pre_conv_node_np, true_types_np, pred_types,
+                    train_embeddings=train_pre_conv_node_emb,
+                    train_true_types=train_pre_conv_node_types,
+                    embedding_label='pre-graph-conv embeddings',
+                )
+                writer.add_figure(f'NodeType/Graph_{orig_idx}_plsda_preconv', fig, 0)
+                plt.close(fig)
+            except Exception as exc:
+                print(f"[warn] Node pre-graph-conv PLS-DA failed for graph {orig_idx}: {exc}")
 
     return collected
 

@@ -414,8 +414,14 @@ class Model(torch.nn.Module):
 
         return self.node_visual_cnn(node_patches), edge_visual
 
-    def forward(self, data, return_attention=False, return_embeddings=False,
-                attribution_mode=False, return_node_logits=False):
+    def _backbone(self, data, attribution_mode=False):
+        """Shared graph-conv backbone: fuses inputs, runs both GCNConv/EdgeUpdater
+        stages, and returns everything `forward` and the embedding-extraction methods
+        (`pre_conv_node_embedding`, `node_embedding`) need. Extracted from `forward` so
+        those methods can obtain `x_out` (the final, pre-classifier node
+        representation) without duplicating this logic; `forward`'s own behavior and
+        return-value branching are unchanged by this extraction.
+        """
         x = data.x
         edge_index = data.edge_index
         edge_attr = data.edge_attr
@@ -430,6 +436,7 @@ class Model(torch.nn.Module):
             else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
         edge_batch = batch_vec[edge_index[0]]
 
+        node_visual = edge_visual = None
         if self.use_visual_features:
             node_visual, edge_visual = self._extract_visual(data)
             if attribution_mode:
@@ -464,6 +471,14 @@ class Model(torch.nn.Module):
         edge_out = self.edge_updater_1(x_out, edge_index, edge_out)
         edge_out = torch.cat([edge_out, edge_attr_orig], dim=-1)
         edge_out = self.norm_e2(edge_out, edge_batch)
+
+        return x_out, edge_out, x, edge_attr, node_visual, edge_visual, alpha1, alpha2
+
+    def forward(self, data, return_attention=False, return_embeddings=False,
+                attribution_mode=False, return_node_logits=False):
+        edge_index = data.edge_index
+        x_out, edge_out, x, edge_attr, node_visual, edge_visual, alpha1, alpha2 = \
+            self._backbone(data, attribution_mode=attribution_mode)
 
         node_logits = None
         if return_node_logits:
@@ -513,3 +528,45 @@ class Model(torch.nn.Module):
         if return_node_logits:
             return out, node_logits
         return out
+
+    def pre_conv_edge_embedding(self, data):
+        """Edge feature vector as it enters the first graph convolution (conv1): the
+        raw or visually-fused edge_attr, before any GCNConv/EdgeUpdater processes it.
+        Same edge order as data.edge_attr / data.edge_label.
+
+        Mirrors the input-fusion lines at the top of `forward` (the `edge_in` computed
+        there); kept as a separate method rather than a `forward` flag so this addition
+        does not touch `forward`'s existing combinatorial return-value logic.
+        """
+        edge_attr = data.edge_attr
+        if self.use_visual_features:
+            _, edge_visual = self._extract_visual(data)
+            return self.edge_fusion(edge_attr, edge_visual)
+        return edge_attr
+
+    def pre_conv_node_embedding(self, data):
+        """Node feature vector as it enters the first graph convolution (conv1): the
+        raw or visually-fused node features, before any GCNConv processes them.
+
+        Mirrors `pre_conv_edge_embedding` for nodes; same rationale for being a
+        separate method rather than a `forward` flag.
+        """
+        x = data.x
+        if self.use_visual_features:
+            node_visual, _ = self._extract_visual(data)
+            return self.node_fusion(x, node_visual)
+        return x
+
+    def node_embedding(self, data):
+        """Pre-classifier node embedding: NodeClassifier.mlp_body's output on the
+        final, post-graph-conv node representation (x_out) -- the node analogue of
+        the edge Classifier's pre-logit embedding. Requires predict_node_type=True.
+
+        Runs its own `_backbone` pass rather than reusing one already computed by a
+        `forward` call elsewhere, so it stays a simple, self-contained method instead
+        of threading another return value through `forward`'s existing branchy logic.
+        """
+        if not self.predict_node_type:
+            raise RuntimeError("node_embedding requires Model(predict_node_type=True).")
+        x_out, *_ = self._backbone(data)
+        return self.node_classifier.mlp_body(x_out)

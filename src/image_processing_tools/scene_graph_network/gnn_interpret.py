@@ -3,10 +3,15 @@ Interpretation utilities for the GCN model.
 
 Two analyses are provided, both computed at the best early-stopping epoch only:
 
-  1. Pre-logit embedding visualization (PCA, PLS-DA)
-     The D-dimensional vector produced by Classifier.mlp_body immediately before
-     the final linear layer is extracted for every test edge. Scatter plots in
-     PCA and PLS-DA space are color-coded by TP / TN / FP / FN.
+  1. Edge embedding visualization (PCA, PLS-DA)
+     Two edge representations are each visualized in PCA and PLS-DA space, color-coded
+     by TP / TN / FP / FN: the pre-logit embedding (the D-dimensional vector produced by
+     Classifier.mlp_body immediately before the final linear layer, i.e. after both graph
+     convolutions) and the pre-graph-conv embedding (Model.pre_conv_edge_embedding --
+     the edge's raw or visually-fused feature vector before any graph convolution runs).
+     Each is logged as its own standalone figure (plot_pca_figure / plot_plsda_figure),
+     not combined with each other or with the attribution heatmap, so they can be
+     assembled freely afterwards.
 
   2. Per-edge gradient × input attribution heatmap
      For each edge prediction, the sensitivity of the logit to each input feature
@@ -25,9 +30,9 @@ Two analyses are provided, both computed at the best early-stopping epoch only:
      Values are log-transformed and row-normalized so each row (edge) sums to 1,
      enabling direct comparison of feature contributions within a single edge.
 
-The primary output is plot_combined_figure(), which renders all three analyses
-in a two-row layout: PCA and PLS-DA (square) on the top row, attribution
-heatmap spanning the full width on the bottom row.
+plot_attribution_heatmap() is the standalone heatmap-only figure logged during CV.
+plot_combined_figure() (PCA + PLS-DA + heatmap in one image) is kept for other callers
+but is no longer used by the CV logging path in gnn_train.py.
 """
 
 import numpy as np
@@ -45,6 +50,23 @@ _CLASS_COLORS = {
     'FN': '#ff7f0e',
 }
 _CLASS_ORDER = ['TP', 'TN', 'FP', 'FN']
+
+# Node-type display palette. Background is the reject class, so it takes the alarm
+# colour; the two real cell types get cool/warm. Matches 11_Node Type
+# Classification.ipynb and plot_node_type_comparison, so figures read alike. Lives here
+# (not in gnn_train.py) so both modules can use it without a circular import.
+NODE_TYPE_COLORS = {0: (1.0, 0.15, 0.15), 1: (0.20, 0.45, 1.0), 2: (1.0, 0.55, 0.0)}
+NODE_TYPE_NAMES = {0: 'background', 1: 'epithelial', 2: 'hyphal'}
+
+# Shared sizing for every figure logged standalone to TensorBoard during CV, so titles/
+# axes/legends read consistently across Merge, Predictions, Attention, Probabilities,
+# NodeType, and Interpretation figures. NOT used by _fill_heatmap_axes: that panel packs
+# one row per edge and one column per feature into a fixed width, and scales its own
+# (much smaller) fonts with edge/feature count to avoid overlap.
+FIG_TITLE_FS = 16
+FIG_AXIS_FS = 13
+FIG_TICK_FS = 12
+FIG_LEGEND_FS = 12
 
 # Short feature names matching the cell-mask schema column order in data.x
 # (cell_mask_graph.NODE_FEATURE_COLUMNS, 8) and data.edge_attr
@@ -412,7 +434,8 @@ def _prepare_heatmap_data(attr_matrix, probs, edge_classes, feature_names, group
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _fill_pca_ax(ax, embeddings, edge_classes,
-                 train_embeddings=None, train_true_labels=None):
+                 train_embeddings=None, train_true_labels=None,
+                 embedding_label='pre-logit embeddings'):
     from matplotlib.lines import Line2D
     has_train = train_embeddings is not None and train_true_labels is not None
 
@@ -445,9 +468,10 @@ def _fill_pca_ax(ax, embeddings, edge_classes,
                                 alpha=0.7, s=40, linewidths=1.2, zorder=2)
                 sc.set_linestyle('--')
 
-    ax.set_xlabel(f'PC1 ({var[0]*100:.1f}%)', fontsize=8)
-    ax.set_ylabel(f'PC2 ({var[1]*100:.1f}%)', fontsize=8)
-    ax.set_title('PCA — pre-logit embeddings', fontsize=9)
+    ax.set_xlabel(f'PC1 ({var[0]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+    ax.set_ylabel(f'PC2 ({var[1]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+    ax.set_title(f'PCA — {embedding_label}', fontsize=FIG_TITLE_FS)
+    ax.tick_params(axis='both', labelsize=FIG_TICK_FS)
     ax.set_box_aspect(1)
 
     handles = []
@@ -467,13 +491,33 @@ def _fill_pca_ax(ax, embeddings, edge_classes,
                                       markeredgecolor=color,
                                       markeredgewidth=1.2, markersize=6,
                                       label=name))
-    ax.legend(handles=handles, fontsize=6,
+    ax.legend(handles=handles, fontsize=FIG_LEGEND_FS,
               ncol=2 if has_train else 1,
               handletextpad=0.3, columnspacing=0.8)
 
 
+def _pls_variance_explained(pls, X_c, n_components=2):
+    """R²X(k) = SS(t_k p_k') / SS(X_centered), re-running NIPALS deflation.
+
+    x_weights_ holds the unit-norm NIPALS w vectors; x_scores_ = X @ W* which uses a
+    rotated basis and can exceed SS_tot. Shared by the edge and node PLS-DA fill
+    functions so this deflation logic exists once.
+    """
+    SS_tot = np.sum(X_c ** 2) + 1e-8
+    var = np.zeros(n_components)
+    X_res = X_c.copy()
+    for k in range(n_components):
+        w = pls.x_weights_[:, k]
+        t = X_res @ w
+        p = X_res.T @ t / (np.dot(t, t) + 1e-8)
+        var[k] = np.dot(t, t) * np.dot(p, p) / SS_tot
+        X_res -= np.outer(t, p)
+    return var
+
+
 def _fill_plsda_ax(ax, embeddings, true_labels, edge_classes,
-                   train_embeddings=None, train_true_labels=None):
+                   train_embeddings=None, train_true_labels=None,
+                   embedding_label='pre-logit embeddings'):
     from matplotlib.lines import Line2D
     has_train = train_embeddings is not None and train_true_labels is not None
     try:
@@ -488,19 +532,8 @@ def _fill_plsda_ax(ax, embeddings, true_labels, edge_classes,
         pls = PLSRegression(n_components=2)
         pls.fit(all_emb, all_labels)
 
-        # R²X(k) = SS(t_k p_k') / SS(X_centered), re-running NIPALS deflation.
-        # x_weights_ holds the unit-norm NIPALS w vectors; x_scores_ = X @ W* which
-        # uses a rotated basis and can exceed SS_tot.
-        X_c    = all_emb - all_emb.mean(axis=0)
-        SS_tot = np.sum(X_c ** 2) + 1e-8
-        var_lv = np.zeros(2)
-        X_res  = X_c.copy()
-        for k in range(2):
-            w = pls.x_weights_[:, k]
-            t = X_res @ w
-            p = X_res.T @ t / (np.dot(t, t) + 1e-8)
-            var_lv[k] = np.dot(t, t) * np.dot(p, p) / SS_tot
-            X_res -= np.outer(t, p)
+        X_c = all_emb - all_emb.mean(axis=0)
+        var_lv = _pls_variance_explained(pls, X_c)
 
         result = pls.transform(embeddings)
         coords = result[0] if isinstance(result, tuple) else result
@@ -527,9 +560,10 @@ def _fill_plsda_ax(ax, embeddings, true_labels, edge_classes,
                                     alpha=0.7, s=40, linewidths=1.2, zorder=2)
                     sc.set_linestyle('--')
 
-        ax.set_xlabel(f'LV1 ({var_lv[0]*100:.1f}%)', fontsize=8)
-        ax.set_ylabel(f'LV2 ({var_lv[1]*100:.1f}%)', fontsize=8)
-        ax.set_title('PLS-DA — pre-logit embeddings', fontsize=9)
+        ax.set_xlabel(f'LV1 ({var_lv[0]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+        ax.set_ylabel(f'LV2 ({var_lv[1]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+        ax.set_title(f'PLS-DA — {embedding_label}', fontsize=FIG_TITLE_FS)
+        ax.tick_params(axis='both', labelsize=FIG_TICK_FS)
         ax.set_box_aspect(1)
 
         handles = []
@@ -549,14 +583,164 @@ def _fill_plsda_ax(ax, embeddings, true_labels, edge_classes,
                                           markeredgecolor=color,
                                           markeredgewidth=1.2, markersize=6,
                                           label=name))
-        ax.legend(handles=handles, fontsize=6,
+        ax.legend(handles=handles, fontsize=FIG_LEGEND_FS,
                   ncol=2 if has_train else 1,
                   handletextpad=0.3, columnspacing=0.8)
 
     except Exception as exc:
         ax.text(0.5, 0.5, f'PLS-DA failed:\n{exc}',
-                transform=ax.transAxes, ha='center', va='center', fontsize=8)
-        ax.set_title('PLS-DA — failed', fontsize=9)
+                transform=ax.transAxes, ha='center', va='center', fontsize=FIG_AXIS_FS)
+        ax.set_title('PLS-DA — failed', fontsize=FIG_TITLE_FS)
+        ax.set_box_aspect(1)
+
+
+def _fill_node_pca_ax(ax, embeddings, pred_types,
+                      train_embeddings=None, train_true_types=None,
+                      embedding_label='pre-classifier embeddings'):
+    """PCA scatter for node embeddings. Test points: filled, black-edged circles
+    colored by PREDICTED node type. Training points (optional): open, dashed-edge
+    circles colored by TRUE node type, plotted behind the test points -- mirrors
+    _fill_pca_ax's test/train visual convention, with NODE_TYPE_COLORS/_NAMES in
+    place of the edge TP/TN/FP/FN scheme.
+    """
+    from matplotlib.lines import Line2D
+    has_train = train_embeddings is not None and train_true_types is not None
+
+    all_emb = np.vstack([embeddings, train_embeddings]) if has_train else embeddings
+    pca = PCA(n_components=2)
+    pca.fit(all_emb)
+    var = pca.explained_variance_ratio_
+    coords = pca.transform(embeddings)
+    train_coords = pca.transform(train_embeddings) if has_train else None
+
+    pred_types = np.asarray(pred_types).astype(int)
+    for cls in sorted(NODE_TYPE_NAMES):
+        mask = pred_types == cls
+        if mask.any():
+            ax.scatter(coords[mask, 0], coords[mask, 1],
+                       color=NODE_TYPE_COLORS[cls],
+                       alpha=0.85, s=45, edgecolors='k', linewidths=0.4,
+                       zorder=3)
+
+    # Training nodes colored by true type, plotted behind the test points as open
+    # dashed circles (mirrors edges' true-label-colored training overlay).
+    if has_train:
+        train_true = np.asarray(train_true_types).astype(int)
+        for cls in sorted(NODE_TYPE_NAMES):
+            tmask = train_true == cls
+            if tmask.any():
+                sc = ax.scatter(train_coords[tmask, 0], train_coords[tmask, 1],
+                                facecolors='none', edgecolors=NODE_TYPE_COLORS[cls],
+                                alpha=0.7, s=40, linewidths=1.2, zorder=2)
+                sc.set_linestyle('--')
+
+    ax.set_xlabel(f'PC1 ({var[0]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+    ax.set_ylabel(f'PC2 ({var[1]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+    ax.set_title(f'PCA — {embedding_label}', fontsize=FIG_TITLE_FS)
+    ax.tick_params(axis='both', labelsize=FIG_TICK_FS)
+    ax.set_box_aspect(1)
+
+    handles = []
+    for cls in sorted(NODE_TYPE_NAMES):
+        if np.any(pred_types == cls):
+            handles.append(Line2D([0], [0], linestyle='none', marker='o',
+                                  markerfacecolor=NODE_TYPE_COLORS[cls],
+                                  markeredgecolor='k', markeredgewidth=0.4,
+                                  markersize=6, label=NODE_TYPE_NAMES[cls]))
+    if has_train:
+        train_true = np.asarray(train_true_types).astype(int)
+        for cls in sorted(NODE_TYPE_NAMES):
+            if np.any(train_true == cls):
+                handles.append(Line2D([0], [0], linestyle='none', marker='o',
+                                      markerfacecolor='none',
+                                      markeredgecolor=NODE_TYPE_COLORS[cls],
+                                      markeredgewidth=1.2, markersize=6,
+                                      label=f'{NODE_TYPE_NAMES[cls]} (tr)'))
+    ax.legend(handles=handles, fontsize=FIG_LEGEND_FS,
+              ncol=2 if has_train else 1,
+              handletextpad=0.3, columnspacing=0.8)
+
+
+def _fill_node_plsda_ax(ax, embeddings, true_types, pred_types,
+                        train_embeddings=None, train_true_types=None,
+                        embedding_label='pre-classifier embeddings'):
+    """PLS-DA scatter for node embeddings, using a one-hot-encoded multiclass target
+    (node type is categorical, not ordinal, so a single integer target would wrongly
+    imply an ordering between classes). Same test/train visual convention as
+    _fill_node_pca_ax.
+    """
+    from matplotlib.lines import Line2D
+    has_train = train_embeddings is not None and train_true_types is not None
+    n_classes = len(NODE_TYPE_NAMES)
+    try:
+        true_types = np.asarray(true_types).astype(int)
+        if has_train:
+            all_emb = np.vstack([embeddings, train_embeddings])
+            all_types = np.concatenate([true_types, np.asarray(train_true_types).astype(int)])
+        else:
+            all_emb, all_types = embeddings, true_types
+
+        pls = PLSRegression(n_components=2)
+        pls.fit(all_emb, np.eye(n_classes)[all_types])
+
+        X_c = all_emb - all_emb.mean(axis=0)
+        var_lv = _pls_variance_explained(pls, X_c)
+
+        result = pls.transform(embeddings)
+        coords = result[0] if isinstance(result, tuple) else result
+        if has_train:
+            result_tr = pls.transform(train_embeddings)
+            train_coords = result_tr[0] if isinstance(result_tr, tuple) else result_tr
+
+        pred_types = np.asarray(pred_types).astype(int)
+        for cls in sorted(NODE_TYPE_NAMES):
+            mask = pred_types == cls
+            if mask.any():
+                ax.scatter(coords[mask, 0], coords[mask, 1],
+                           color=NODE_TYPE_COLORS[cls],
+                           alpha=0.85, s=45, edgecolors='k', linewidths=0.4,
+                           zorder=3)
+
+        if has_train:
+            train_true = np.asarray(train_true_types).astype(int)
+            for cls in sorted(NODE_TYPE_NAMES):
+                tmask = train_true == cls
+                if tmask.any():
+                    sc = ax.scatter(train_coords[tmask, 0], train_coords[tmask, 1],
+                                    facecolors='none', edgecolors=NODE_TYPE_COLORS[cls],
+                                    alpha=0.7, s=40, linewidths=1.2, zorder=2)
+                    sc.set_linestyle('--')
+
+        ax.set_xlabel(f'LV1 ({var_lv[0]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+        ax.set_ylabel(f'LV2 ({var_lv[1]*100:.1f}%)', fontsize=FIG_AXIS_FS)
+        ax.set_title(f'PLS-DA — {embedding_label}', fontsize=FIG_TITLE_FS)
+        ax.tick_params(axis='both', labelsize=FIG_TICK_FS)
+        ax.set_box_aspect(1)
+
+        handles = []
+        for cls in sorted(NODE_TYPE_NAMES):
+            if np.any(pred_types == cls):
+                handles.append(Line2D([0], [0], linestyle='none', marker='o',
+                                      markerfacecolor=NODE_TYPE_COLORS[cls],
+                                      markeredgecolor='k', markeredgewidth=0.4,
+                                      markersize=6, label=NODE_TYPE_NAMES[cls]))
+        if has_train:
+            train_true = np.asarray(train_true_types).astype(int)
+            for cls in sorted(NODE_TYPE_NAMES):
+                if np.any(train_true == cls):
+                    handles.append(Line2D([0], [0], linestyle='none', marker='o',
+                                          markerfacecolor='none',
+                                          markeredgecolor=NODE_TYPE_COLORS[cls],
+                                          markeredgewidth=1.2, markersize=6,
+                                          label=f'{NODE_TYPE_NAMES[cls]} (tr)'))
+        ax.legend(handles=handles, fontsize=FIG_LEGEND_FS,
+                  ncol=2 if has_train else 1,
+                  handletextpad=0.3, columnspacing=0.8)
+
+    except Exception as exc:
+        ax.text(0.5, 0.5, f'PLS-DA failed:\n{exc}',
+                transform=ax.transAxes, ha='center', va='center', fontsize=FIG_AXIS_FS)
+        ax.set_title('PLS-DA — failed', fontsize=FIG_TITLE_FS)
         ax.set_box_aspect(1)
 
 
@@ -725,17 +909,18 @@ def plot_probability_violin(probs, true_labels, threshold=None, title=None,
         label = threshold_label or f'threshold = {threshold:.3f}'
         ax.axhline(threshold, color='black', linestyle='--', linewidth=1.1,
                    alpha=0.8, label=label)
-        ax.legend(fontsize=8, loc='center right')
+        ax.legend(fontsize=FIG_LEGEND_FS, loc='center right')
 
     for pos, group in zip(positions, groups):
         ax.text(pos, 1.04, f'μ={group.mean():.2f}\nσ={group.std():.2f}',
-                ha='center', va='bottom', fontsize=8)
+                ha='center', va='bottom', fontsize=FIG_AXIS_FS)
 
     ax.set_xticks(positions)
-    ax.set_xticklabels(names, fontsize=9)
-    ax.set_ylabel('Predicted probability', fontsize=9)
+    ax.set_xticklabels(names, fontsize=FIG_TICK_FS)
+    ax.set_ylabel('Predicted probability', fontsize=FIG_AXIS_FS)
+    ax.tick_params(axis='y', labelsize=FIG_TICK_FS)
     ax.set_ylim(-0.05, 1.15)
-    ax.set_title(title or 'Predicted probability by true label', fontsize=10)
+    ax.set_title(title or 'Predicted probability by true label', fontsize=FIG_TITLE_FS)
     ax.grid(axis='y', alpha=0.2)
     fig.tight_layout()
     return fig
@@ -803,13 +988,14 @@ def plot_attention_parallel_coords(attn_df):
     # parallel_coordinates adds one legend entry per call; keep one per class.
     handles, labels = ax.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
-    ax.legend(unique.values(), unique.keys(), fontsize=8, title='Edge class',
-              title_fontsize=8)
+    ax.legend(unique.values(), unique.keys(), fontsize=FIG_LEGEND_FS, title='Edge class',
+              title_fontsize=FIG_LEGEND_FS)
 
-    ax.set_xticklabels(['Attention — layer 1', 'Attention — layer 2'], fontsize=9)
-    ax.set_ylabel('Symmetrized attention weight', fontsize=9)
+    ax.set_xticklabels(['Attention — layer 1', 'Attention — layer 2'], fontsize=FIG_AXIS_FS)
+    ax.set_ylabel('Symmetrized attention weight', fontsize=FIG_AXIS_FS)
+    ax.tick_params(axis='y', labelsize=FIG_TICK_FS)
     ax.set_title(f'Per-edge attention across GCN layers ({len(attn_df)} directed edges)',
-                 fontsize=10)
+                 fontsize=FIG_TITLE_FS)
     ax.grid(axis='y', alpha=0.2)
     fig.tight_layout()
     return fig
@@ -916,27 +1102,64 @@ def plot_combined_figure(embeddings, true_labels, edge_classes,
 
 
 def plot_pca_figure(embeddings, edge_classes,
-                    train_embeddings=None, train_true_labels=None):
-    """Standalone 2-D PCA scatter. See plot_combined_figure for the primary output."""
-    fig, ax = plt.subplots(figsize=(5, 5))
-    _fill_pca_ax(ax, embeddings, edge_classes, train_embeddings, train_true_labels)
+                    train_embeddings=None, train_true_labels=None,
+                    embedding_label='pre-logit embeddings'):
+    """Standalone 2-D PCA scatter, logged as its own Interpretation/ tag."""
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    _fill_pca_ax(ax, embeddings, edge_classes, train_embeddings, train_true_labels,
+                embedding_label=embedding_label)
     fig.tight_layout()
     return fig
 
 
 def plot_plsda_figure(embeddings, true_labels, edge_classes,
-                      train_embeddings=None, train_true_labels=None):
-    """Standalone PLS-DA scatter. See plot_combined_figure for the primary output."""
-    fig, ax = plt.subplots(figsize=(5, 5))
+                      train_embeddings=None, train_true_labels=None,
+                      embedding_label='pre-logit embeddings'):
+    """Standalone PLS-DA scatter, logged as its own Interpretation/ tag."""
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
     _fill_plsda_ax(ax, embeddings, true_labels, edge_classes,
-                   train_embeddings, train_true_labels)
+                   train_embeddings, train_true_labels,
+                   embedding_label=embedding_label)
+    fig.tight_layout()
+    return fig
+
+
+def plot_node_pca_figure(embeddings, pred_types,
+                         train_embeddings=None, train_true_types=None,
+                         embedding_label='pre-classifier embeddings'):
+    """Standalone 2-D PCA scatter of node embeddings, logged as its own NodeType/ tag."""
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    _fill_node_pca_ax(ax, embeddings, pred_types, train_embeddings, train_true_types,
+                      embedding_label=embedding_label)
+    fig.tight_layout()
+    return fig
+
+
+def plot_node_plsda_figure(embeddings, true_types, pred_types,
+                           train_embeddings=None, train_true_types=None,
+                           embedding_label='pre-classifier embeddings'):
+    """Standalone PLS-DA scatter of node embeddings, logged as its own NodeType/ tag."""
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    _fill_node_plsda_ax(ax, embeddings, true_types, pred_types,
+                        train_embeddings, train_true_types,
+                        embedding_label=embedding_label)
     fig.tight_layout()
     return fig
 
 
 def plot_attribution_heatmap(attr_matrix, probs, edge_classes, feature_names, groups,
-                             column_order='grouped'):
-    """Standalone attribution heatmap. See plot_combined_figure for the primary output."""
+                             column_order='grouped', heatmap_idx=None):
+    """Standalone attribution heatmap: class strip, probability column, and the
+    attribution heatmap -- no PCA/PLS-DA row, so it can be logged and assembled
+    independently of the scatter figures.
+
+    `heatmap_idx` optionally subsets the edges shown (e.g. from
+    `sample_heatmap_edges`), for a readable "_sampled" variant.
+    """
+    if heatmap_idx is not None:
+        heatmap_idx = np.asarray(heatmap_idx, dtype=int)
+        attr_matrix, probs, edge_classes = (attr_matrix[heatmap_idx], probs[heatmap_idx],
+                                            edge_classes[heatmap_idx])
     attr_norm, probs_s, classes_s, vmax, feat_names, feat_colors, group_spans = \
         _prepare_heatmap_data(attr_matrix, probs, edge_classes, feature_names, groups,
                               column_order)
@@ -1031,12 +1254,78 @@ def plot_edge_outcome_by_node_pair(node_types, edge_index, edge_classes, class_n
         left += pct[:, j]
 
     ax.set_yticks(y)
-    ax.set_yticklabels([f'{p}\n(n={t})' for p, t in zip(pairs, totals)], fontsize=9)
+    ax.set_yticklabels([f'{p}\n(n={t})' for p, t in zip(pairs, totals)], fontsize=FIG_TICK_FS)
     ax.set_xlim(0, 100)
-    ax.set_xlabel('share of that pair\'s edges (%)')
+    ax.set_xlabel('share of that pair\'s edges (%)', fontsize=FIG_AXIS_FS)
+    ax.tick_params(axis='x', labelsize=FIG_TICK_FS)
     ax.invert_yaxis()
-    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.01), ncol=4, frameon=False)
-    ax.set_title(title or 'Edge outcome by predicted node-type pair', pad=34)
+    ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.01), ncol=4, frameon=False,
+              fontsize=FIG_LEGEND_FS)
+    ax.set_title(title or 'Edge outcome by predicted node-type pair', pad=34,
+                fontsize=FIG_TITLE_FS)
+    ax.spines[['top', 'right']].set_visible(False)
+    fig.tight_layout()
+    return fig
+
+
+def plot_overlap_histogram(overlaps, threshold=0.1, bins=20, title=None):
+    """Histogram of each fragment's overlap fraction with its best-matching GT cell.
+
+    A fragment whose best overlap falls below `threshold` is labeled background; the
+    rest take the type of the cell they overlap. Bars are split at the threshold --
+    red below it (background), blue at or above it (assigned to a cell) -- and a
+    dashed line marks the cutoff, so the figure shows how the choice partitions the
+    fragments and whether the cutoff sits in a sparse region of the distribution.
+
+    Args:
+        overlaps:  (N,) array of per-fragment overlap fractions in [0, 1].
+        threshold: background cutoff (default 0.1).
+        bins:      number of histogram bins over [0, 1].
+        title:     figure title; a default is used when None.
+
+    Returns:
+        matplotlib Figure.
+    """
+    overlaps = np.asarray(overlaps, dtype=float)
+    counts, edges = np.histogram(overlaps, bins=bins, range=(0.0, 1.0))
+    widths = np.diff(edges)
+
+    bg_color, keep_color = '#d1495b', '#4a7fd4'   # background (red) vs assigned (blue)
+    bar_colors = [bg_color if left < threshold else keep_color for left in edges[:-1]]
+
+    n_total = len(overlaps)
+    n_bg = int((overlaps < threshold).sum())
+    n_keep = n_total - n_bg
+    pct_bg = 100.0 * n_bg / max(n_total, 1)
+    pct_keep = 100.0 * n_keep / max(n_total, 1)
+
+    # Sized close to the other node-type-classification panels it gets assembled next to
+    # (thesis_figures/node_type_classification, saved at the same dpi=100), so it isn't a
+    # low-resolution outlier that blurs when resized to match them.
+    fig, ax = plt.subplots(figsize=(14, 10))
+    ax.bar(edges[:-1], counts, width=widths, align='edge',
+           color=bar_colors, edgecolor='white', linewidth=0.6, zorder=2)
+
+    ymax = counts.max() if counts.size else 1
+    ax.axvline(threshold, color='#222222', linestyle='--', linewidth=1.3, zorder=3)
+    ax.text(threshold + 0.01, ymax * 0.98, f'cutoff = {threshold:g}',
+            ha='left', va='top', fontsize=18, color='#222222')
+
+    legend_handles = [
+        Patch(facecolor=bg_color, edgecolor='white',
+              label=f'background (overlap < {threshold:g}): {n_bg} ({pct_bg:.0f}\\%)'.replace('\\%', '%')),
+        Patch(facecolor=keep_color, edgecolor='white',
+              label=f'assigned to a cell (≥ {threshold:g}): {n_keep} ({pct_keep:.0f}\\%)'.replace('\\%', '%')),
+    ]
+    ax.legend(handles=legend_handles, loc='upper center', frameon=False, fontsize=18)
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, ymax * 1.15)
+    ax.set_xlabel("Fragment overlap with best-matching ground-truth cell", fontsize=20)
+    ax.set_ylabel("Number of fragments", fontsize=20)
+    ax.set_title(title or f"Fragment overlap distribution (n = {n_total})", fontsize=24)
+    ax.tick_params(axis='both', labelsize=18)
+    ax.grid(axis='y', alpha=0.25, zorder=0)
     ax.spines[['top', 'right']].set_visible(False)
     fig.tight_layout()
     return fig
