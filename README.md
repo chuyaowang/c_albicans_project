@@ -1,4 +1,4 @@
-# *Candida albicans* Invasion Imaging & Analysis
+# Towards Invasion Modeling in *C. albicans*-Epithelial Cell Co-cultures: A Vision Transformer and Graph Neural Network Pipeline
 
 Code for my Master's thesis studying *C. albicans* invasion of epithelial cell layers.
 The pipeline segments cells and hyphae from co-culture microscopy images, fine-tunes a
