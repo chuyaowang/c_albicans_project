@@ -1,4 +1,4 @@
-# Towards Invasion Modeling in *C. albicans*-Epithelial Cell Co-cultures: A Vision Transformer and Graph Neural Network Pipeline
+# Towards Invasion Modeling in *C. albicans*-Epithelial Cell Co-cultures: A Vision Transformer and Graph Neural Network Pipeline for Microscopy Data Analysis
 
 Code for my Master's thesis studying *C. albicans* invasion of epithelial cell layers.
 The pipeline segments cells and hyphae from co-culture microscopy images, fine-tunes a
@@ -64,8 +64,8 @@ interpretation) lives in the numbered notebooks under `notebooks/`, run in order
 
 ## Results at a glance
 
-**Raw data.** Fluorescence stainings used for cell/hyphal wall staining, nuclei
-labeling, and combined imaging. (A) Phalloidin. (B) Calcofluor white. (C) DAPI. (D) CellBrite.
+**Raw data.** Imaging modalities used across the dataset. (A) Phalloidin. (B) Calcofluor
+white. (C) CellBrite. (D) DIC. (E) DAPI. (F) smFISH against *ECE1*.
 
 ![Raw data](assets/readme/02_raw_data.png)
 
@@ -112,8 +112,7 @@ correlation with them.
 ## Conclusion and Future Work
 
 Cross-validation showed the model memorizes any single graph almost perfectly but
-generalizes poorly across folds. The node and edge embeddings become more separated after the graph convolution layers (shown in the PCA and PLSDA plots), yet the testing graph's distribution maps poorly to this separation. The limiting factor here is therefore the diversity of imaging modalities across the six training images rather than a lack of
-model capacity. Future work:
+generalizes poorly across folds. The node and edge embeddings become more separated after the graph convolution layers (shown in the PCA and PLSDA plots), yet the testing graph's distribution maps poorly to this separation. The limiting factor here is therefore the diversity of imaging modalities across the six training images rather than a lack of model capacity. Future work:
 
 - Generate synthetic over-segmentation data by cutting ground-truth masks into new
   fragmentations, multiplying training graphs without new microscopy.
