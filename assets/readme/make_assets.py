@@ -16,7 +16,7 @@ MAX_WIDTH = 1600
 
 SOURCES = [
     (FIGURES / "flow.png", "01_pipeline_flow.png"),
-    (FIGURES / "assembled_fig_6images.png", "02_raw_data.png"),
+    (FIGURES / "assembled_fig_8images.png", "02_raw_data.png"),
     (FIGURES / "generalization" / "generalization_before_after.png", "03_generalization.png"),
     (FIGURES / "Node_type_GCN.png", "04_gcn_architecture.png"),
     (FIGURES / "gcn_cell_graph" / "CET112_HWP1Cal610_6h_GoC_01_DIC.png", "05_cell_merge_graph.png"),

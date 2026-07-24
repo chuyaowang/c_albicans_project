@@ -64,8 +64,9 @@ interpretation) lives in the numbered notebooks under `notebooks/`, run in order
 
 ## Results at a glance
 
-**Raw data.** Imaging modalities used across the dataset. (A) Phalloidin. (B) Calcofluor
-white. (C) CellBrite. (D) DIC. (E) DAPI. (F) smFISH against *ECE1*.
+**Raw data.** Imaging modalities used across the dataset. (A) Phalloidin. (B) Phalloidin
+(invaded cell). (C) Calcofluor white. (D) CellBrite. (E) DAPI. (F) DAPI (invaded nuclei).
+(G) DIC. (H) smFISH against *ECE1*.
 
 ![Raw data](assets/readme/02_raw_data.png)
 
